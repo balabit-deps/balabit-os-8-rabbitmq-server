@@ -1,3 +1,11 @@
+rabbitmq-server (3.8.2-0ubuntu1.2) focal; urgency=medium
+
+  [ Thomas Goirand ]
+  * d/rabbitmq-server.logrotate: Do not use a sharedscripts, as
+    rabbitmq-server detects the log rotation by itself. (LP: #1921425)
+
+ -- Utkarsh Gupta <utkarsh.gupta@canonical.com>  Tue, 06 Apr 2021 15:48:23 +0530
+
 rabbitmq-server (3.8.2-0ubuntu1.1) focal; urgency=medium
 
   * Fix timeout discrepancy between SysV and systemd (LP: #1874075)
