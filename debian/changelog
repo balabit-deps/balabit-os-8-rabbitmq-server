@@ -1,3 +1,13 @@
+rabbitmq-server (3.8.2-0ubuntu1.3) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Denial of service
+    - debian/patches/CVE-2021-22116.patch: treat arrays with extra or
+      missing input as fatal errors in src/amqp10_binary_parser.erl,
+      test/binary_parser_SUITE.erl.
+    - CVE-2021-22116
+
+ -- Leonidas Da Silva Barbosa <leo.barbosa@canonical.com>  Wed, 23 Jun 2021 10:05:38 -0300
+
 rabbitmq-server (3.8.2-0ubuntu1.2) focal; urgency=medium
 
   [ Thomas Goirand ]
