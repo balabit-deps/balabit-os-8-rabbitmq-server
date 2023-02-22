@@ -1,3 +1,11 @@
+rabbitmq-server (3.8.2-0ubuntu1.4) focal; urgency=medium
+
+  * d/p/lp1999816-fix-rabbitmqctl-status-disk-free-timeout.patch:
+    Fix rabbitmqctl status when free disk space cannot be determined 
+    (LP: #1999816). 
+
+ -- Jorge Merlino <jorge.merlino@canonical.com>  Wed, 22 Feb 2023 19:47:18 -0300
+
 rabbitmq-server (3.8.2-0ubuntu1.3) focal-security; urgency=medium
 
   * SECURITY UPDATE: Denial of service
