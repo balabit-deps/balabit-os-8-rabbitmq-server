@@ -24,6 +24,11 @@
 -define(METRICS_WINDOW_SIZE, 100).
 -define(CURRENT_VERSION, 1).
 -define(MAGIC, "RAWA").
+-define(HEADER_SIZE, 5).
+%% define a minimum allowable wal size. If anyone tries to set a really small
+%% size that is smaller than the logical block size the pre-allocation code may
+%% fail
+-define(MIN_WAL_SIZE, 65536).
 
 % a writer_id consists of a unqique local name (see ra_directory) and a writer's
 % current pid().
@@ -44,9 +49,6 @@
 
 -record(batch, {writes = 0 :: non_neg_integer(),
                 waiting = #{} :: #{pid() => #batch_writer{}},
-                                   % {From :: ra_index(), To :: ra_index(),
-                                   %  Term :: ra_term()}},
-                start_time :: maybe(integer()),
                 pending = [] :: iolist()
                }).
 
@@ -66,7 +68,8 @@
                compute_checksums = false :: boolean(),
                max_size_bytes = ?MAX_SIZE_BYTES :: non_neg_integer(),
                write_strategy = default :: wal_write_strategy(),
-               sync_method = datasync :: sync | datasync
+               sync_method = datasync :: sync | datasync,
+               counter :: counters:counters_ref()
               }).
 
 -record(wal, {fd :: maybe(file:io_device()),
@@ -194,23 +197,21 @@ init(#{dir := Dir} = Conf0) ->
     % at times receive large number of messages from a large number of
     % writers
     process_flag(message_queue_data, off_heap),
-    _ = ets:new(ra_log_wal_metrics,
-                [set, named_table, {read_concurrency, true}, protected]),
+    CRef = ra_counters:new(?MODULE, 3),
     % seed metrics table with data
-    [true = ets:insert(ra_log_wal_metrics, {I, undefined})
-     || I <- lists:seq(0, ?METRICS_WINDOW_SIZE-1)],
     % wait for the segment writer to process anything in flight
     ok = ra_log_segment_writer:await(SegWriter),
     %% TODO: recover wal should return {stop, Reason} if it fails
     %% rather than crash
-    FileModes = [raw, append, binary],
+    FileModes = [raw, write, read, binary],
     Conf = #conf{file_modes = FileModes,
                  dir = Dir,
                  segment_writer = SegWriter,
                  compute_checksums = ComputeChecksums,
-                 max_size_bytes = MaxWalSize,
+                 max_size_bytes = max(?MIN_WAL_SIZE, MaxWalSize),
                  write_strategy = WriteStrategy,
-                 sync_method = SyncMethod},
+                 sync_method = SyncMethod,
+                 counter = CRef},
     {ok, recover_wal(Dir, Conf)}.
 
 -spec handle_batch([wal_op()], state()) ->
@@ -489,10 +490,11 @@ roll_over(OpnMemTbls, #state{wal = Wal0, file_num = Num0,
                                           max_size_bytes = MaxBytes,
                                           segment_writer = SegWriter} = Conf0}
           = State0) ->
+    counters:add(Conf0#conf.counter, 3, 1),
     Num = Num0 + 1,
     Fn = ra_lib:zpad_filename("", "wal", Num),
     NextFile = filename:join(Dir, Fn),
-    ?DEBUG("wal: opening new file ~p~n", [Fn]),
+    ?DEBUG("wal: opening new file ~ts~n", [Fn]),
     %% if this is the first wal since restart randomise the first
     %% max wal size to reduce the likelyhood that each erlang node will
     %% flush mem tables at the same time
@@ -515,12 +517,10 @@ roll_over(OpnMemTbls, #state{wal = Wal0, file_num = Num0,
 open_wal(File, Max, #conf{write_strategy = o_sync,
                           file_modes = Modes0} = Conf) ->
         Modes = [sync | Modes0],
-        case ra_file_handle:open(File, Modes) of
+        case prepare_file(File, Modes) of
             {ok, Fd} ->
-                ok = write_header(Fd),
                 % many platforms implement O_SYNC a bit like O_DSYNC
                 % perform a manual sync here to ensure metadata is flushed
-                ok = ra_file_handle:sync(Fd),
                 {Conf, #wal{fd = Fd,
                             max_size = Max,
                             filename = File}};
@@ -529,16 +529,51 @@ open_wal(File, Max, #conf{write_strategy = o_sync,
                       "Reverting back to default strategy.", []),
                 open_wal(File, Max, Conf#conf{write_strategy = default})
         end;
-open_wal(File, Max, #conf{file_modes = Modes} = Conf) ->
-    {ok, Fd} = ra_file_handle:open(File, Modes),
-    ok = write_header(Fd),
+open_wal(File, Max, #conf{file_modes = Modes} = Conf0) ->
+    {ok, Fd} = prepare_file(File, Modes),
+    Conf = maybe_pre_allocate(Conf0, Fd, Max),
     {Conf, #wal{fd = Fd,
                 max_size = Max,
                 filename = File}}.
 
-write_header(Fd) ->
-    ok = ra_file_handle:write(Fd, <<?MAGIC>>),
-    ok = ra_file_handle:write(Fd, <<?CURRENT_VERSION:8/unsigned>>).
+prepare_file(File, Modes) ->
+    Tmp = make_tmp(File),
+    %% rename is atomic-ish so we will never accidentally write an empty wal file
+    %% using prim_file here as file:rename/2 uses the file server
+    ok = prim_file:rename(Tmp, File),
+    case ra_file_handle:open(File, Modes) of
+        {ok, Fd2} ->
+            {ok, ?HEADER_SIZE} = file:position(Fd2, ?HEADER_SIZE),
+            {ok, Fd2};
+        {error, _} = Err ->
+            Err
+    end.
+
+make_tmp(File) ->
+    Tmp = filename:rootname(File) ++ ".tmp",
+    {ok, Fd} = file:open(Tmp, [write, binary, raw]),
+    ok = file:write(Fd, <<?MAGIC, ?CURRENT_VERSION:8/unsigned>>),
+    ok = file:sync(Fd),
+    ok = file:close(Fd),
+    Tmp.
+
+maybe_pre_allocate(#conf{sync_method = datasync} = Conf, Fd, Max0) ->
+    Max = Max0 - ?HEADER_SIZE,
+    case file:allocate(Fd, ?HEADER_SIZE, Max) of
+        ok ->
+            {ok, Max} = file:position(Fd, Max),
+            ok = file:truncate(Fd),
+            {ok, ?HEADER_SIZE} = file:position(Fd, ?HEADER_SIZE),
+            Conf;
+        {error, _} ->
+            %% fallocate may not be supported, fall back to fsync instead
+            %% of fdatasync
+            ?INFO("wal: preallocation may not be supported by the file system"
+                  " falling back to fsync instead of fdatasync", []),
+            Conf#conf{sync_method = sync}
+    end;
+maybe_pre_allocate(Conf, _Fd, _Max) ->
+    Conf.
 
 close_file(undefined) ->
     ok;
@@ -588,8 +623,9 @@ open_mem_table(UId) ->
     true = ra_log_ets:give_away(Tid),
     Tid.
 
-start_batch(State) ->
-    State#state{batch = #batch{start_time = os:system_time(microsecond)}}.
+start_batch(#state{conf = #conf{counter = CRef}} = State) ->
+    ok = counters:add(CRef, 2, 1),
+    State#state{batch = #batch{}}.
 
 
 flush_pending(#state{wal = #wal{fd = Fd},
@@ -609,15 +645,14 @@ flush_pending(#state{wal = #wal{fd = Fd},
 complete_batch(#state{batch = undefined} = State) ->
     State;
 complete_batch(#state{batch = #batch{waiting = Waiting,
-                                     writes = NumWrites,
-                                     start_time = ST},
-                      metrics_cursor = Cursor
+                                     writes = NumWrites},
+                      metrics_cursor = Cursor,
+                      conf = Cfg
                       } = State00) ->
-    TS = os:system_time(microsecond),
+    % TS = os:system_time(microsecond),
     State0 = flush_pending(State00),
-    SyncTS = os:system_time(microsecond),
-    _ = ets:update_element(ra_log_wal_metrics, Cursor,
-                           {2, {NumWrites, TS-ST, SyncTS-TS}}),
+    % SyncTS = os:system_time(microsecond),
+    counters:add(Cfg#conf.counter, 1, NumWrites),
     NextCursor = (Cursor + 1) rem ?METRICS_WINDOW_SIZE,
     State = State0#state{metrics_cursor = NextCursor,
                          batch = undefined},
@@ -647,11 +682,19 @@ open_existing(File) ->
         {ok, <<?MAGIC, ?CURRENT_VERSION:8/unsigned, Data/binary>>} ->
             %% the only version currently supported
             Data;
-        {ok, <<Magic:64/binary, UnknownVersion:8/unsigned, _/binary>>} ->
+        {ok, <<Magic:4/binary, UnknownVersion:8/unsigned, _/binary>>} ->
             exit({unknown_wal_file_format, Magic, UnknownVersion})
     end.
 
 
+dump_records(<<_:1/unsigned, 0:1/unsigned, _:22/unsigned,
+               IdDataLen:16/unsigned, _:IdDataLen/binary,
+               _:32/integer,
+               0:32/unsigned,
+               _Idx:64/unsigned, _Term:64/unsigned,
+               _EntryData:0/binary,
+               _Rest/binary>>, Entries) ->
+    Entries;
 dump_records(<<_:1/unsigned, 0:1/unsigned, _:22/unsigned,
                IdDataLen:16/unsigned, _:IdDataLen/binary,
                _:32/integer,

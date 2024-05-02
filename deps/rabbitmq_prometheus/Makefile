@@ -1,10 +1,21 @@
 TODAY := $(shell date -u +'%Y.%m.%d')
-# Use the latest alpha RabbitMQ 3.9 release - https://dl.bintray.com/rabbitmq/all-dev/rabbitmq-server/
-BASED_ON_RABBITMQ_VERSION := 3.9.0-alpha.76
+# Use the latest alpha RabbitMQ 3.8 release - https://ci.rabbitmq.com/teams/main/pipelines/server-release:v3.8.x/jobs/build-test-package-generic-unix-latest-toolchain
+BASED_ON_RABBITMQ_VERSION := 3.8.3-alpha.93
 DOCKER_IMAGE_NAME := pivotalrabbitmq/rabbitmq-prometheus
 DOCKER_IMAGE_VERSION := $(BASED_ON_RABBITMQ_VERSION)-$(TODAY)
 # RABBITMQ_VERSION is used in rabbitmq-components.mk to set PROJECT_VERSION
 RABBITMQ_VERSION ?= $(DOCKER_IMAGE_VERSION)
+# This is taken from the CI job above
+RABBITMQ_BUILD_NUMBER := 880
+# make find-latest-otp
+OTP_VERSION := 22.2.6
+OTP_SHA256 := 4cf44ed12f657c309a2c00e7806f36f56a88e5b74de6814058796561f3842f66
+
+define PROJECT_ENV
+[
+	{return_per_object_metrics, false}
+]
+endef
 
 PROJECT := rabbitmq_prometheus
 PROJECT_MOD := rabbit_prometheus_app
@@ -94,8 +105,11 @@ di: docker-image
 .PHONY: docker-image-build
 docker-image-build: ## dib | Build Docker image locally - make tests
 	@docker build --pull \
-	  --build-arg PGP_KEYSERVER=pgpkeys.eu \
+	  --build-arg PGP_KEYSERVER=pgpkeys.uk \
+	  --build-arg OTP_VERSION=$(OTP_VERSION) \
+	  --build-arg OTP_SHA256=$(OTP_SHA256) \
 	  --build-arg RABBITMQ_VERSION=$(BASED_ON_RABBITMQ_VERSION) \
+	  --build-arg RABBITMQ_BUILD_NUMBER=$(RABBITMQ_BUILD_NUMBER) \
 	  --build-arg RABBITMQ_PROMETHEUS_VERSION=$(RABBITMQ_VERSION) \
 	  --tag $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION) \
 	  --tag $(DOCKER_IMAGE_NAME):latest .
@@ -106,7 +120,7 @@ dib: docker-image-build
 docker-image-bump: ## diu | Bump Docker image version across all docker-compose-* files
 	@sed -i '' \
 	  -e 's|$(DOCKER_IMAGE_NAME):.*|$(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION)|g' \
-	  -e 's|pivotalrabbitmq/perf-test:.*|pivotalrabbitmq/perf-test:2.9.1-ubuntu|g' \
+	  -e 's|pivotalrabbitmq/perf-test:.*|pivotalrabbitmq/perf-test:2.10.0-ubuntu|g' \
 	  docker/docker-compose-{overview,dist-tls,qq}.yml
 .PHONY: diu
 diu: docker-image-bump
@@ -199,9 +213,9 @@ CFh:
 DASHBOARDS_TO_PATH := $(CURDIR)/docker/grafana/dashboards
 define GENERATE_DASHBOARD
 cd $(DASHBOARDS_TO_PATH) \
-&& jq --slurp add $(@F) __inputs.json \
-| jq '.templating.list[].datasource = "$${DS_PROMETHEUS}"' \
-| jq '.panels[].datasource = "$${DS_PROMETHEUS}"'
+&& $(JQ) --slurp add $(@F) ../__inputs.json \
+| $(JQ) '.templating.list[].datasource = "$${DS_PROMETHEUS}"' \
+| $(JQ) '.panels[].datasource = "$${DS_PROMETHEUS}"'
 endef
 .PHONY: Erlang-Distribution.json
 Erlang-Distribution.json: $(JQ)

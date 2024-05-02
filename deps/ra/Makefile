@@ -11,7 +11,7 @@ export ERLC_OPTS
 DEPS += gen_batch_server
 dep_gen_batch_server = hex 0.8.2 undefined
 DEPS += aten
-dep_aten = hex 0.5.2 undefined
+dep_aten = hex 0.5.3 undefined
 
 
 rebar_dep: preprocess pre-deps deps pre-app app

@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQCtl do
   alias RabbitMQ.CLI.Core.{
@@ -387,6 +387,9 @@ defmodule RabbitMQCtl do
   defp format_validation_error(:node_not_running),
     do: "this command requires the target node to be running."
 
+  defp format_validation_error(:unsupported_formatter),
+    do: "the requested formatter is not supported by this command"
+
   defp format_validation_error(err), do: inspect(err)
 
   defp exit_program(code) do
@@ -522,8 +525,8 @@ defmodule RabbitMQCtl do
   defp format_error({:error, :check_failed, err}, %{formatter: "json"}, _) do
     {:error, ExitCodes.exit_unavailable(), err}
   end
-  defp format_error({:error, :check_failed, _}, _, _) do
-    {:error, ExitCodes.exit_unavailable(), nil}
+  defp format_error({:error, :check_failed, err}, _, _) do
+    {:error, ExitCodes.exit_unavailable(), err}
   end
 
   defp format_error({:error, nil}, _, _) do

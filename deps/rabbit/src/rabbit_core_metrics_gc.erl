@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 -module(rabbit_core_metrics_gc).
 
@@ -80,7 +80,7 @@ gc_local_queues() ->
     GbSetDown = gb_sets:from_list(QueuesDown),
     gc_queue_metrics(GbSet, GbSetDown),
     gc_entity(queue_coarse_metrics, GbSet),
-    Followers = gb_sets:from_list(rabbit_amqqueue:list_local_followers()),
+    Followers = gb_sets:from_list([amqqueue:get_name(Q) || Q <- rabbit_amqqueue:list_local_followers() ]),
     gc_leader_data(Followers).
 
 gc_leader_data(Followers) ->

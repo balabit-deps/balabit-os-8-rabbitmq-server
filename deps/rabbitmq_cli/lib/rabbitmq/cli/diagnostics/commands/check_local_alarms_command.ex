@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Diagnostics.Commands.CheckLocalAlarmsCommand do
   @moduledoc """
@@ -62,9 +62,9 @@ defmodule RabbitMQ.CLI.Diagnostics.Commands.CheckLocalAlarmsCommand do
   end
 
   def output(alarms, %{node: node_name, formatter: "json"}) do
-    {:ok,
+    {:error, :check_failed,
      %{
-       "result" => "ok",
+       "result" => "error",
        "local" => alarm_lines(alarms, node_name),
        "message" => "Node #{node_name} reported local alarms"
      }}

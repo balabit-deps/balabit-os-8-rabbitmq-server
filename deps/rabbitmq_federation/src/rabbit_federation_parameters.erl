@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_federation_parameters).
@@ -74,8 +74,9 @@ notify(_VHost, <<"federation-upstream">>, Name, _Term, _Username) ->
 notify_clear(_VHost, <<"federation-upstream-set">>, Name, _Username) ->
     adjust({clear_upstream_set, Name});
 
-notify_clear(_VHost, <<"federation-upstream">>, Name, _Username) ->
-    adjust({clear_upstream, Name}).
+notify_clear(VHost, <<"federation-upstream">>, Name, _Username) ->
+    rabbit_federation_exchange_link_sup_sup:adjust({clear_upstream, VHost, Name}),
+    rabbit_federation_queue_link_sup_sup:adjust({clear_upstream, VHost, Name}).
 
 adjust(Thing) ->
     rabbit_federation_exchange_link_sup_sup:adjust(Thing),

@@ -24,7 +24,9 @@
 -export([update_page_pos/3]).
 -export([get_pos/4]).
 -export([sublist/3]).
--define(DEFAULT_ROW_SIZE, 35). %% the number from 13' mbp
+-export([sbcs_to_mbcs/2]).
+%% the number 35 from 13' mbp
+-define(DEFAULT_ROW_SIZE, application:get_env(observer_cli, default_row_size, 35)).
 
 -define(select(Title), ?RED_BG, Title, ?RESET_BG).
 -define(unselect(Title), ?L_GRAY_BG, Title, ?RESET_BG).
@@ -302,3 +304,15 @@ sublist(AllEts, Rows, CurPage) ->
             lists:sublist(SortEts, Start, Rows);
         false -> []
     end.
+
+-spec sbcs_to_mbcs(list(), list()) -> list().
+sbcs_to_mbcs(TypeList, STMList) ->
+    FoldlFun =
+        fun({{Type, _}, New}, Acc) when is_number(New) ->
+            case lists:member(Type, TypeList) of
+                true -> maps:update_with(Type, fun(V) -> V + New end, 0, Acc);
+                false -> Acc
+            end;
+            (_, Acc) -> Acc
+        end,
+    maps:to_list(lists:foldl(FoldlFun, #{}, STMList)).

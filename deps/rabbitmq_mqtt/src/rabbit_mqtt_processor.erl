@@ -11,14 +11,15 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_mqtt_processor).
 
 -export([info/2, initial_state/2, initial_state/5,
          process_frame/2, amqp_pub/2, amqp_callback/2, send_will/1,
-         close_connection/1, handle_pre_hibernate/0]).
+         close_connection/1, handle_pre_hibernate/0,
+         handle_ra_event/2]).
 
 %% for testing purposes
 -export([get_vhost_username/1, get_vhost/3, get_vhost_from_user_mapping/2,
@@ -140,15 +141,15 @@ process_request(?CONNECT,
                                 {{?CONNACK_ACCEPT, SessionPresent0}, PState2};
                             {?CONNACK_ACCEPT, Conn, VHost, AState} ->
                                 case rabbit_mqtt_collector:register(ClientId, self()) of
-                                  ok ->
-                                    RetainerPid = rabbit_mqtt_retainer_sup:child_for_vhost(VHost),
-                                    link(Conn),
+                                    {ok, Corr} ->
+                                        RetainerPid = rabbit_mqtt_retainer_sup:child_for_vhost(VHost),
+                                        link(Conn),
                                     {ok, Ch} = amqp_connection:open_channel(Conn),
-                                    link(Ch),
-                                    amqp_channel:enable_delivery_flow_control(Ch),
-                                    Prefetch = rabbit_mqtt_util:env(prefetch),
-                                    #'basic.qos_ok'{} = amqp_channel:call(
-                                      Ch, #'basic.qos'{prefetch_count = Prefetch}),
+                                        link(Ch),
+                                        amqp_channel:enable_delivery_flow_control(Ch),
+                                        Prefetch = rabbit_mqtt_util:env(prefetch),
+                                        #'basic.qos_ok'{} = amqp_channel:call(Ch,
+                                            #'basic.qos'{prefetch_count = Prefetch}),
                                     rabbit_mqtt_reader:start_keepalive(self(), Keepalive),
                                     PState3 = PState1#proc_state{
                                                 will_msg   = make_will_msg(Var),
@@ -157,7 +158,8 @@ process_request(?CONNECT,
                                                 connection = Conn,
                                                 client_id  = ClientId,
                                                 retainer_pid = RetainerPid,
-                                                auth_state = AState},
+                                                auth_state = AState,
+                                                register_state = {pending, Corr}},
                                     {SessionPresent1, PState4} = maybe_clean_sess(PState3),
                                     {{?CONNACK_ACCEPT, SessionPresent1}, PState4};
                                   %% e.g. this node was removed from the MQTT cluster members
@@ -897,7 +899,12 @@ close_connection(PState = #proc_state{ connection = Connection,
     % todo: maybe clean session
     case ClientId of
         undefined -> ok;
-        _         -> ok = rabbit_mqtt_collector:unregister(ClientId, self())
+        _         ->
+            case rabbit_mqtt_collector:unregister(ClientId, self()) of
+                ok           -> ok;
+                %% ignore as we are shutting down
+                {timeout, _} -> ok
+            end
     end,
     %% ignore noproc or other exceptions, we are shutting down
     catch amqp_connection:close(Connection),
@@ -907,6 +914,28 @@ close_connection(PState = #proc_state{ connection = Connection,
 handle_pre_hibernate() ->
     erase(topic_permission_cache),
     ok.
+
+handle_ra_event({applied, [{Corr, ok}]},
+                PState = #proc_state{register_state = {pending, Corr}}) ->
+    %% success case - command was applied transition into registered state
+    PState#proc_state{register_state = registered};
+handle_ra_event({not_leader, Leader, Corr},
+                PState = #proc_state{register_state = {pending, Corr},
+                                     client_id = ClientId}) ->
+    %% retry command against actual leader
+    {ok, NewCorr} = rabbit_mqtt_collector:register(Leader, ClientId, self()),
+    PState#proc_state{register_state = {pending, NewCorr}};
+handle_ra_event(register_timeout,
+                PState = #proc_state{register_state = {pending, _Corr},
+                                     client_id = ClientId}) ->
+    {ok, NewCorr} = rabbit_mqtt_collector:register(ClientId, self()),
+    PState#proc_state{register_state = {pending, NewCorr}};
+handle_ra_event(register_timeout, PState) ->
+    PState;
+handle_ra_event(Evt, PState) ->
+    %% log these?
+    rabbit_log:debug("unhandled ra_event: ~w ~n", [Evt]),
+    PState.
 
 %% NB: check_*: MQTT spec says we should ack normally, ie pretend there
 %% was no auth error, but here we are closing the connection with an error. This

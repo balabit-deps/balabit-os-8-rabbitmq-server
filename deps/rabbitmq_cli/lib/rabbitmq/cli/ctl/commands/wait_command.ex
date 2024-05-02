@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Ctl.Commands.WaitCommand do
   alias RabbitMQ.CLI.Core.{Helpers, Validators}
@@ -118,7 +118,7 @@ defmodule RabbitMQ.CLI.Ctl.Commands.WaitCommand do
   #
 
   def wait_for(timeout, fun) do
-    sleep = round(timeout / 10)
+    sleep = 1000
 
     case wait_for_loop(timeout, sleep, fun) do
       {:error, :timeout} -> {:error, {:timeout, timeout}}

@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_mqtt).
@@ -25,8 +25,8 @@
 start(normal, []) ->
     {ok, Listeners} = application:get_env(tcp_listeners),
     {ok, SslListeners} = application:get_env(ssl_listeners),
-    Result = rabbit_mqtt_sup:start_link({Listeners, SslListeners}, []),
     ok = mqtt_node:start(),
+    Result = rabbit_mqtt_sup:start_link({Listeners, SslListeners}, []),
     EMPid = case rabbit_event:start_link() of
               {ok, Pid}                       -> Pid;
               {error, {already_started, Pid}} -> Pid

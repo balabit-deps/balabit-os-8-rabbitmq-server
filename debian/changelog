@@ -1,3 +1,32 @@
+rabbitmq-server (3.8.3-0ubuntu0.1) focal; urgency=medium
+
+  * New upstream verison 3.8.3 (LP: #2060248).
+    - RabbitMQ nodes will now gracefully shutdown when receiving a `SIGTERM`
+      signal. Previously the runtime would invoke a default handler that
+      terminates the VM giving RabbitMQ no chance to execute its shutdown
+      steps.
+    - Speedup execution of boot steps by a factor of 2N, where N is the number
+      of attributes per step.
+    - New health checks that can be used to determine if it's a good moment to
+      shut down a node for an upgrade.
+    - details about these changes can be found at
+      https://github.com/rabbitmq/rabbitmq-server/blob/main/release-notes/3.8.3.md
+  * Packaging changes needed by this update:
+    - d/watch: update to find upstream tarball, and verify its signature
+    - d/upstream/signing-key.asc: added, downloaded from
+      https://github.com/rabbitmq/signing-keys/releases/download/3.0/rabbitmq-release-signing-key.asc
+    - d/p/CVE-2023-46118-{1,2}.patch: refresh
+    - d/p/lp1999816-fix-rabbitmqctl-status-disk-free-timeout.patch: fix offset
+    - d/p/lets-use-python3-not-python-binary.patch: refresh
+  * Added new dep8 tests (LP: #1679386):
+    - d/t/smoke-test
+    - d/t/hello-world
+    - d/t/publish-subscribe
+    - d/t/rpc
+    - d/t/work-queue
+
+ -- Mitchell Dzurick <mitchell.dzurick@canonical.com>  Wed, 01 May 2024 17:02:31 -0700
+
 rabbitmq-server (3.8.2-0ubuntu1.5) focal-security; urgency=medium
 
   * SECURITY UPDATE: Denial of service

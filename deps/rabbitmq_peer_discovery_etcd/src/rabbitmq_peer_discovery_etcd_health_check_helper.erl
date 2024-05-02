@@ -11,7 +11,7 @@
 %%   The Original Code is RabbitMQ Management Console.
 %%
 %%   The Initial Developer of the Original Code is GoPivotal, Inc.
-%%   Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%%   Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 %% This gen_server starts a periodic timer on behalf of
@@ -31,7 +31,9 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
--record(state, {timer_ref}).
+-record(state, {timer_ref = undefined}).
+
+-type(state() :: #state{timer_ref :: timer:tref() | undefined}).
 
 
 %%
@@ -41,11 +43,13 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+-spec init(list()) -> {ok, state()}.
+
 init([]) ->
     Map = ?CONFIG_MODULE:config_map(?BACKEND_CONFIG_KEY),
     case ?CONFIG_MODULE:get(etcd_node_ttl, ?CONFIG_MAPPING, Map) of
         undefined ->
-            {ok, #state{}};
+            {ok, #state{timer_ref = none}};
         %% in seconds
         Interval  ->
             %% We cannot use timer:apply_interval/4 here because this

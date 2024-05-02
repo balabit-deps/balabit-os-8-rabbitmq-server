@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ Management Plugin.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2018 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_mgmt_dispatcher).
@@ -45,10 +45,10 @@ build_routes(Ignore) ->
     [{'_', Routes2}].
 
 build_root_index_routes("", ManagementApp) ->
-    [{"/", cowboy_static, root_idx_file(ManagementApp)}];
+    [{"/", rabbit_mgmt_wm_static, root_idx_file(ManagementApp)}];
 build_root_index_routes(Prefix, ManagementApp) ->
     [{"/", rabbit_mgmt_wm_redirect, Prefix ++ "/"},
-     {Prefix, cowboy_static, root_idx_file(ManagementApp)}].
+     {Prefix, rabbit_mgmt_wm_static, root_idx_file(ManagementApp)}].
 
 build_redirect_route(Path, Location) ->
     {Path, rabbit_mgmt_wm_redirect, Location}.
@@ -173,5 +173,7 @@ dispatcher() ->
      {"/healthchecks/node/:node",                              rabbit_mgmt_wm_healthchecks, []},
      {"/reset",                                                rabbit_mgmt_wm_reset, []},
      {"/reset/:node",                                          rabbit_mgmt_wm_reset, []},
-     {"/auth",                                                 rabbit_mgmt_wm_auth, []}
+     {"/rebalance/queues",                                     rabbit_mgmt_wm_rebalance_queues, [{queues, all}]},
+     {"/auth",                                                 rabbit_mgmt_wm_auth, []},
+     {"/login",                                                rabbit_mgmt_wm_login, []}
     ].

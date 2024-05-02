@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 # Basic JSON formatter. Supports 1-level of
 # collection using start/finish_collection.
@@ -22,6 +22,9 @@ alias RabbitMQ.CLI.Formatters.FormatterHelpers
 defmodule RabbitMQ.CLI.Formatters.Json do
   @behaviour RabbitMQ.CLI.FormatterBehaviour
 
+  def format_output(output, opts) when is_bitstring(output) do
+    format_output(%{"message" => output}, opts)
+  end
   def format_output(output, _opts) do
     {:ok, json} = JSON.encode(keys_to_atoms(output))
     json

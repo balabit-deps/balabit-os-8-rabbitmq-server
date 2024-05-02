@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2018-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2018-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_quorum_queue).
@@ -42,10 +42,16 @@
 -export([transfer_leadership/2, get_replicas/1, queue_length/1]).
 -export([file_handle_leader_reservation/1, file_handle_other_reservation/0]).
 -export([file_handle_release_reservation/0]).
+-export([list_with_minimum_quorum/0, list_with_minimum_quorum_for_cli/0,
+         filter_quorum_critical/1, filter_quorum_critical/2,
+         all_replica_states/0]).
+-export([is_policy_applicable/2]).
+-export([repair_amqqueue_nodes/1,
+         repair_amqqueue_nodes/2
+         ]).
 
-%%-include_lib("rabbit_common/include/rabbit.hrl").
--include_lib("rabbit.hrl").
 -include_lib("stdlib/include/qlc.hrl").
+-include("rabbit.hrl").
 -include("amqqueue.hrl").
 
 -type msg_id() :: non_neg_integer().
@@ -234,6 +240,78 @@ become_leader(QName, Name) ->
                   end
           end).
 
+-spec all_replica_states() -> {node(), #{atom() => atom()}}.
+all_replica_states() ->
+    Rows = ets:tab2list(ra_state),
+    {node(), maps:from_list(Rows)}.
+
+-spec list_with_minimum_quorum() -> [amqqueue:amqqueue()].
+list_with_minimum_quorum() ->
+    filter_quorum_critical(rabbit_amqqueue:list_local_quorum_queues()).
+
+-spec list_with_minimum_quorum_for_cli() -> [#{binary() => term()}].
+list_with_minimum_quorum_for_cli() ->
+    QQs = list_with_minimum_quorum(),
+    [begin
+         #resource{name = Name} = amqqueue:get_name(Q),
+         #{
+             <<"readable_name">> => rabbit_misc:rs(amqqueue:get_name(Q)),
+             <<"name">> => Name,
+             <<"virtual_host">> => amqqueue:get_vhost(Q),
+             <<"type">> => <<"quorum">>
+         }
+     end || Q <- QQs].
+
+-spec filter_quorum_critical([amqqueue:amqqueue()]) -> [amqqueue:amqqueue()].
+filter_quorum_critical(Queues) ->
+    %% Example map of QQ replica states:
+    %%    #{rabbit@warp10 =>
+    %%      #{'%2F_qq.636' => leader,'%2F_qq.243' => leader,
+    %%        '%2F_qq.1939' => leader,'%2F_qq.1150' => leader,
+    %%        '%2F_qq.1109' => leader,'%2F_qq.1654' => leader,
+    %%        '%2F_qq.1679' => leader,'%2F_qq.1003' => leader,
+    %%        '%2F_qq.1593' => leader,'%2F_qq.1765' => leader,
+    %%        '%2F_qq.933' => leader,'%2F_qq.38' => leader,
+    %%        '%2F_qq.1357' => leader,'%2F_qq.1345' => leader,
+    %%        '%2F_qq.1694' => leader,'%2F_qq.994' => leader,
+    %%        '%2F_qq.490' => leader,'%2F_qq.1704' => leader,
+    %%        '%2F_qq.58' => leader,'%2F_qq.564' => leader,
+    %%        '%2F_qq.683' => leader,'%2F_qq.386' => leader,
+    %%        '%2F_qq.753' => leader,'%2F_qq.6' => leader,
+    %%        '%2F_qq.1590' => leader,'%2F_qq.1363' => leader,
+    %%        '%2F_qq.882' => leader,'%2F_qq.1161' => leader,...}}
+    ReplicaStates = maps:from_list(
+                        rabbit_misc:append_rpc_all_nodes(rabbit_nodes:all_running(),
+                            ?MODULE, all_replica_states, [])),
+    filter_quorum_critical(Queues, ReplicaStates).
+
+-spec filter_quorum_critical([amqqueue:amqqueue()], #{node() => #{atom() => atom()}}) -> [amqqueue:amqqueue()].
+
+filter_quorum_critical(Queues, ReplicaStates) ->
+    lists:filter(fun (Q) ->
+                    MemberNodes = rabbit_amqqueue:get_quorum_nodes(Q),
+                    {Name, _Node} = amqqueue:get_pid(Q),
+                    AllUp = lists:filter(fun (N) ->
+                                            {Name, _} = amqqueue:get_pid(Q),
+                                            case maps:get(N, ReplicaStates, undefined) of
+                                                #{Name := State} when State =:= follower orelse State =:= leader ->
+                                                    true;
+                                                _ -> false
+                                            end
+                                         end, MemberNodes),
+                    MinQuorum = length(MemberNodes) div 2 + 1,
+                    length(AllUp) =< MinQuorum
+                 end, Queues).
+
+-spec is_policy_applicable(amqqueue:amqqueue(), any()) -> boolean().
+is_policy_applicable(_Q, Policy) ->
+    Applicable = [<<"max-length">>, <<"max-length-bytes">>, <<"max-in-memory-length">>,
+                  <<"max-in-memory-bytes">>, <<"delivery-limit">>, <<"dead-letter-exchange">>,
+                  <<"dead-letter-routing-key">>],
+    lists:all(fun({P, _}) ->
+                      lists:member(P, Applicable)
+              end, Policy).
+
 rpc_delete_metrics(QName) ->
     ets:delete(queue_coarse_metrics, QName),
     ets:delete(queue_metrics, QName),
@@ -301,7 +379,38 @@ repair_leader_record(QName, Self) ->
     end,
     ok.
 
+repair_amqqueue_nodes(VHost, QueueName) ->
+    QName = #resource{virtual_host = VHost, name = QueueName, kind = queue},
+    repair_amqqueue_nodes(QName).
 
+-spec repair_amqqueue_nodes(rabbit_types:r('queue') | amqqueue:amqqueue()) ->
+    ok | repaired.
+repair_amqqueue_nodes(QName = #resource{}) ->
+    {ok, Q0} = rabbit_amqqueue:lookup(QName),
+    repair_amqqueue_nodes(Q0);
+repair_amqqueue_nodes(Q0) ->
+    QName = amqqueue:get_name(Q0),
+    Leader = amqqueue:get_pid(Q0),
+    {ok, Members, _} = ra:members(Leader),
+    RaNodes = [N || {_, N} <- Members],
+    #{nodes := Nodes} = amqqueue:get_type_state(Q0),
+    case lists:sort(RaNodes) =:= lists:sort(Nodes) of
+        true ->
+            %% up to date
+            ok;
+        false ->
+            %% update amqqueue record
+            Fun = fun (Q) ->
+                          TS0 = amqqueue:get_type_state(Q),
+                          TS = TS0#{nodes => RaNodes},
+                          amqqueue:set_type_state(Q, TS)
+                  end,
+            rabbit_misc:execute_mnesia_transaction(
+              fun() ->
+                      rabbit_amqqueue:update(QName, Fun)
+              end),
+            repaired
+    end.
 
 reductions(Name) ->
     try
@@ -369,6 +478,16 @@ stop(VHost) ->
              rabbit_types:username()) ->
     {ok, QLen :: non_neg_integer()}.
 
+delete(Q, true, _IfEmpty, _ActingUser) when ?amqqueue_is_quorum(Q) ->
+    rabbit_misc:protocol_error(
+      not_implemented,
+      "cannot delete ~s. queue.delete operations with if-unused flag set are not supported by quorum queues",
+      [rabbit_misc:rs(amqqueue:get_name(Q))]);
+delete(Q, _IfUnused, true, _ActingUser) when ?amqqueue_is_quorum(Q) ->
+    rabbit_misc:protocol_error(
+      not_implemented,
+      "cannot delete ~s. queue.delete operations with if-empty flag set are not supported by quorum queues",
+      [rabbit_misc:rs(amqqueue:get_name(Q))]);
 delete(Q,
        _IfUnused, _IfEmpty, ActingUser) when ?amqqueue_is_quorum(Q) ->
     {Name, _} = amqqueue:get_pid(Q),
@@ -814,8 +933,8 @@ delete_member(Q, Node) when ?amqqueue_is_quorum(Q) ->
             %% deleting the last member is not allowed
             {error, last_node};
         Members ->
-            case ra:leave_and_delete_server(Members, ServerId) of
-                ok ->
+            case ra:remove_member(Members, ServerId) of
+                {ok, _, _Leader} ->
                     Fun = fun(Q1) ->
                                   update_type_state(
                                     Q1,
@@ -825,8 +944,15 @@ delete_member(Q, Node) when ?amqqueue_is_quorum(Q) ->
                           end,
                     rabbit_misc:execute_mnesia_transaction(
                       fun() -> rabbit_amqqueue:update(QName, Fun) end),
-                    ok;
-                timeout ->
+                    case ra:force_delete_server(ServerId) of
+                        ok ->
+                            ok;
+                        {error, _} = Err ->
+                            Err;
+                        Err ->
+                            {error, Err}
+                    end;
+                {timeout, _} ->
                     {error, timeout};
                 E ->
                     E
@@ -888,8 +1014,12 @@ transfer_leadership(Q, Destination) ->
     {RaName, _} = Pid = amqqueue:get_pid(Q),
     case ra:transfer_leadership(Pid, {RaName, Destination}) of
         ok ->
-            {_, _, {_, NewNode}} = ra:members(Pid),
-            {migrated, NewNode};
+          case ra:members(Pid) of
+            {_, _, {_, NewNode}} ->
+              {migrated, NewNode};
+            {timeout, _} ->
+              {not_migrated, ra_members_timeout}
+          end;
         already_leader ->
             {not_migrated, already_leader};
         {error, Reason} ->

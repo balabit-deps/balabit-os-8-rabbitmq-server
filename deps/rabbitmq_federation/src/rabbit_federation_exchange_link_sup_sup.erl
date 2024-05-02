@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ Federation.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_federation_exchange_link_sup_sup).
@@ -52,6 +52,11 @@ start_child(X) ->
         {error, {shutdown, _}} -> ok
     end.
 
+adjust({clear_upstream, VHost, UpstreamName}) ->
+    [rabbit_federation_link_sup:adjust(Pid, X, {clear_upstream, UpstreamName}) ||
+        {#exchange{name = Name} = X, Pid, _, _} <- mirrored_supervisor:which_children(?SUPERVISOR),
+        Name#resource.virtual_host == VHost],
+    ok;
 adjust(Reason) ->
     [rabbit_federation_link_sup:adjust(Pid, X, Reason) ||
         {X, Pid, _, _} <- mirrored_supervisor:which_children(?SUPERVISOR)],

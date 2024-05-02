@@ -15,11 +15,9 @@ Bug-Ubuntu: https://bugs.launchpad.net/bugs/1999816
 Last-Update: 2023-01-30
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
-diff --git a/deps/rabbitmq_cli/lib/rabbitmq/cli/information_unit.ex b/deps/rabbitmq_cli/lib/rabbitmq/cli/information_unit.ex
-index c5e02277a9e..fa548c8fe18 100644
 --- a/deps/rabbitmq_cli/lib/rabbitmq/cli/information_unit.ex
 +++ b/deps/rabbitmq_cli/lib/rabbitmq/cli/information_unit.ex
-@@ -30,14 +30,18 @@ defmodule RabbitMQ.CLI.InformationUnit do
+@@ -39,14 +39,18 @@
      :rabbit_resource_monitor_misc.parse_information_unit(val)
    end
  

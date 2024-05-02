@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_fifo).
@@ -146,7 +146,9 @@ update_config(Conf, State) ->
     SHICur = case State#?MODULE.cfg of
                  #cfg{release_cursor_interval = {_, C}} ->
                      C;
-                 #cfg{release_cursor_interval  = C} ->
+                 #cfg{release_cursor_interval = undefined} ->
+                     SHI;
+                 #cfg{release_cursor_interval = C} ->
                      C
              end,
 
@@ -325,7 +327,7 @@ apply(#{index := RaftIdx}, #purge{},
                                                   messages = #{},
                                                   returns = lqueue:new(),
                                                   msg_bytes_enqueue = 0,
-                                                  prefix_msgs = {[], []},
+                                                  prefix_msgs = {0, [], 0, []},
                                                   low_msg_num = undefined,
                                                   msg_bytes_in_memory = 0,
                                                   msgs_ready_in_memory = 0},
@@ -553,7 +555,7 @@ state_enter(leader, #?MODULE{consumers = Cons,
                              cfg = #cfg{name = Name,
                                         resource = Resource,
                                         become_leader_handler = BLH},
-                             prefix_msgs = {[], []}
+                             prefix_msgs = {0, [], 0, []}
                             }) ->
     % return effects to monitor all current consumers and enqueuers
     Pids = lists:usort(maps:keys(Enqs)
@@ -601,7 +603,7 @@ tick(_Ts, #?MODULE{cfg = #cfg{name = Name,
                EnqueueBytes,
                CheckoutBytes},
     [{mod_call, rabbit_quorum_queue,
-      handle_tick, [QName, Metrics, all_nodes(State)]}, {aux, emit}].
+      handle_tick, [QName, Metrics, all_nodes(State)]}].
 
 -spec overview(state()) -> map().
 overview(#?MODULE{consumers = Cons,
@@ -643,9 +645,11 @@ handle_aux(_, cast, Cmd, {Name, Use0}, Log, _) ->
     Use = case Cmd of
               _ when Cmd == active orelse Cmd == inactive ->
                   update_use(Use0, Cmd);
-              emit ->
+              tick ->
                   true = ets:insert(rabbit_fifo_usage,
                                     {Name, utilisation(Use0)}),
+                  Use0;
+              eval ->
                   Use0
           end,
     {no_reply, {Name, Use}, Log}.
@@ -766,16 +770,16 @@ usage(Name) when is_atom(Name) ->
 %%% Internal
 
 messages_ready(#?MODULE{messages = M,
-                        prefix_msgs = {PreR, PreM},
+                        prefix_msgs = {RCnt, _R, PCnt, _P},
                         returns = R}) ->
 
     %% prefix messages will rarely have anything in them during normal
     %% operations so length/1 is fine here
-    maps:size(M) + lqueue:len(R) + length(PreR) + length(PreM).
+    maps:size(M) + lqueue:len(R) + RCnt + PCnt.
 
 messages_total(#?MODULE{ra_indexes = I,
-                        prefix_msgs = {PreR, PreM}}) ->
-    rabbit_fifo_index:size(I) + length(PreR) + length(PreM).
+                        prefix_msgs = {RCnt, _R, PCnt, _P}}) ->
+    rabbit_fifo_index:size(I) + RCnt + PCnt.
 
 update_use({inactive, _, _, _} = CUInfo, inactive) ->
     CUInfo;
@@ -1012,13 +1016,15 @@ maybe_store_dehydrated_state(RaftIdx,
                                       = Cfg,
                                       ra_indexes = Indexes,
                                       enqueue_count = 0,
-                                      release_cursors = Cursors0} = State) ->
+                                      release_cursors = Cursors0} = State0) ->
     case rabbit_fifo_index:exists(RaftIdx, Indexes) of
         false ->
             %% the incoming enqueue must already have been dropped
-            State;
+            State0;
         true ->
-            Dehydrated = dehydrate_state(State),
+            State = convert_prefix_msgs(State0),
+            {Time, Dehydrated} = timer:tc(fun () -> dehydrate_state(State) end),
+            rabbit_log:info("dehydrating state took ~bms", [Time div 1000]),
             Cursor = {release_cursor, RaftIdx, Dehydrated},
             Cursors = lqueue:in(Cursor, Cursors0),
             Interval = lqueue:len(Cursors) * Base,
@@ -1081,11 +1087,12 @@ maybe_enqueue(RaftIdx, From, MsgSeqNo, RawMsg, Effects0,
 snd(T) ->
     element(2, T).
 
-return(Meta, ConsumerId, Returned,
+return(#{index := IncomingRaftIdx} = Meta, ConsumerId, Returned,
        Effects0, #?MODULE{service_queue = SQ0} = State0) ->
     {State1, Effects1} = maps:fold(
-                          fun(MsgId, {Tag, _} = Msg, {S0, E0}) when Tag == '$prefix_msg';
-                                                                    Tag == '$empty_msg'->
+                           fun(MsgId, {Tag, _} = Msg, {S0, E0})
+                                 when Tag == '$prefix_msg';
+                                      Tag == '$empty_msg'->
                                   return_one(MsgId, 0, Msg, S0, E0, ConsumerId);
                              (MsgId, {MsgNum, Msg}, {S0, E0}) ->
                                   return_one(MsgId, MsgNum, Msg, S0, E0,
@@ -1095,9 +1102,10 @@ return(Meta, ConsumerId, Returned,
     Con = Con0#consumer{credit = increase_credit(Con0, map_size(Returned))},
     {Cons, SQ, Effects2} = update_or_remove_sub(ConsumerId, Con, Cons0,
                                                 SQ0, Effects1),
-    State = State1#?MODULE{consumers = Cons,
-                           service_queue = SQ},
-    checkout(Meta, State, Effects2).
+    State2 = State1#?MODULE{consumers = Cons,
+                            service_queue = SQ},
+    {State, ok, Effects} = checkout(Meta, State2, Effects2),
+    update_smallest_raft_index(IncomingRaftIdx, State, Effects).
 
 % used to processes messages that are finished
 complete(ConsumerId, Discarded,
@@ -1145,7 +1153,6 @@ complete_and_checkout(#{index := IncomingRaftIdx} = Meta, MsgIds, ConsumerId,
     {State2, Effects1} = complete(ConsumerId, Discarded, Con0,
                                   Effects0, State0),
     {State, ok, Effects} = checkout(Meta, State2, Effects1),
-    % settle metrics are incremented separately
     update_smallest_raft_index(IncomingRaftIdx, State, Effects).
 
 dead_letter_effects(_Reason, _Discarded,
@@ -1155,10 +1162,26 @@ dead_letter_effects(_Reason, _Discarded,
 dead_letter_effects(Reason, Discarded,
                     #?MODULE{cfg = #cfg{dead_letter_handler = {Mod, Fun, Args}}},
                     Effects) ->
-    DeadLetters = maps:fold(fun(_, {_, {_, {_Header, Msg}}}, Acc) ->
-                                    [{Reason, Msg} | Acc]
-                            end, [], Discarded),
-    [{mod_call, Mod, Fun, Args ++ [DeadLetters]} | Effects].
+    RaftIdxs = maps:fold(
+                    fun (_, {_, {RaftIdx, {_Header, 'empty'}}}, Acc) ->
+                            [RaftIdx | Acc];
+                        (_, _, Acc) ->
+                            Acc
+                    end, [], Discarded),
+    [{log, RaftIdxs,
+      fun (Log) ->
+              Lookup = maps:from_list(lists:zip(RaftIdxs, Log)),
+              DeadLetters = maps:fold(
+                              fun (_, {_, {RaftIdx, {_Header, 'empty'}}}, Acc) ->
+                                      {enqueue, _, _, Msg} = maps:get(RaftIdx, Lookup),
+                                      [{Reason, Msg} | Acc];
+                                  (_, {_, {_, {_Header, Msg}}}, Acc) ->
+                                      [{Reason, Msg} | Acc];
+                                  (_, _, Acc) ->
+                                      Acc
+                              end, [], Discarded),
+              [{mod_call, Mod, Fun, Args ++ [DeadLetters]}]
+      end} | Effects].
 
 cancel_consumer_effects(ConsumerId,
                         #?MODULE{cfg = #cfg{resource = QName}}, Effects) ->
@@ -1175,8 +1198,7 @@ update_smallest_raft_index(IncomingRaftIdx,
             % we can forward release_cursor all the way until
             % the last received command, hooray
             State = State0#?MODULE{release_cursors = lqueue:new()},
-            {State, ok,
-             [{release_cursor, IncomingRaftIdx, State} | Effects]};
+            {State, ok, Effects ++ [{release_cursor, IncomingRaftIdx, State}]};
         _ ->
             Smallest = rabbit_fifo_index:smallest(Indexes),
             case find_next_cursor(Smallest, Cursors0) of
@@ -1187,7 +1209,7 @@ update_smallest_raft_index(IncomingRaftIdx,
                     %% we can emit a release cursor we've passed the smallest
                     %% release cursor available.
                     {State0#?MODULE{release_cursors = Cursors}, ok,
-                     [Cursor | Effects]}
+                     Effects ++ [Cursor]}
             end
     end.
 
@@ -1226,7 +1248,8 @@ return_one(MsgId, 0, {Tag, Header0},
             %% this should not affect the release cursor in any way
             Con = Con0#consumer{checked_out = maps:remove(MsgId, Checked)},
             {Msg, State1} = case Tag of
-                                '$empty_msg' -> {Msg0, State0};
+                                '$empty_msg' ->
+                                    {Msg0, State0};
                                 _ -> case evaluate_memory_limit(Header, State0) of
                                          true ->
                                              {{'$empty_msg', Header}, State0};
@@ -1290,7 +1313,6 @@ return_all(#?MODULE{consumers = Cons} = State0, Effects0, ConsumerId,
                 end, {State, Effects0}, Checked).
 
 %% checkout new messages to consumers
-%% reverses the effects list
 checkout(#{index := Index}, State0, Effects0) ->
     {State1, _Result, Effects1} = checkout0(checkout_one(State0),
                                             Effects0, {#{}, #{}}),
@@ -1301,14 +1323,15 @@ checkout(#{index := Index}, State0, Effects0) ->
             {State, ok, Effects}
     end.
 
-checkout0({success, ConsumerId, MsgId, {RaftIdx, {Header, 'empty'}}, State}, Effects,
-          {SendAcc, LogAcc0}) ->
+checkout0({success, ConsumerId, MsgId, {RaftIdx, {Header, 'empty'}}, State},
+          Effects, {SendAcc, LogAcc0}) ->
     DelMsg = {RaftIdx, {MsgId, Header}},
     LogAcc = maps:update_with(ConsumerId,
                               fun (M) -> [DelMsg | M] end,
                               [DelMsg], LogAcc0),
     checkout0(checkout_one(State), Effects, {SendAcc, LogAcc});
-checkout0({success, ConsumerId, MsgId, Msg, State}, Effects, {SendAcc0, LogAcc}) ->
+checkout0({success, ConsumerId, MsgId, Msg, State}, Effects,
+          {SendAcc0, LogAcc}) ->
     DelMsg = {MsgId, Msg},
     SendAcc = maps:update_with(ConsumerId,
                                fun (M) -> [DelMsg | M] end,
@@ -1317,10 +1340,12 @@ checkout0({success, ConsumerId, MsgId, Msg, State}, Effects, {SendAcc0, LogAcc})
 checkout0({Activity, State0}, Effects0, {SendAcc, LogAcc}) ->
     Effects1 = case Activity of
                    nochange ->
-                       append_send_msg_effects(append_log_effects(Effects0, LogAcc), SendAcc);
+                       append_send_msg_effects(
+                         append_log_effects(Effects0, LogAcc), SendAcc);
                    inactive ->
                        [{aux, inactive}
-                        | append_send_msg_effects(append_log_effects(Effects0, LogAcc), SendAcc)]
+                        | append_send_msg_effects(
+                            append_log_effects(Effects0, LogAcc), SendAcc)]
                end,
     {State0, ok, lists:reverse(Effects1)}.
 
@@ -1329,7 +1354,8 @@ evaluate_limit(Result,
                                    max_bytes = undefined}} = State,
                Effects) ->
     {State, Result, Effects};
-evaluate_limit(Result, State0, Effects0) ->
+evaluate_limit(Result, State00, Effects0) ->
+    State0 = convert_prefix_msgs(State00),
     case is_over_limit(State0) of
         true ->
             {State, Effects} = drop_head(State0, Effects0),
@@ -1373,17 +1399,21 @@ append_log_effects(Effects0, AccMap) ->
 %%
 %% When we return it is always done to the current return queue
 %% for both prefix messages and current messages
-take_next_msg(#?MODULE{prefix_msgs = {[{'$empty_msg', _} = Msg | Rem], P}} = State) ->
+take_next_msg(#?MODULE{prefix_msgs = {R, P}} = State) ->
+    %% conversion
+    take_next_msg(State#?MODULE{prefix_msgs = {length(R), R, length(P), P}});
+take_next_msg(#?MODULE{prefix_msgs = {NumR, [{'$empty_msg', _} = Msg | Rem],
+                                      NumP, P}} = State) ->
     %% there are prefix returns, these should be served first
-    {Msg, State#?MODULE{prefix_msgs = {Rem, P}}};
-take_next_msg(#?MODULE{prefix_msgs = {[Header | Rem], P}} = State) ->
+    {Msg, State#?MODULE{prefix_msgs = {NumR-1, Rem, NumP, P}}};
+take_next_msg(#?MODULE{prefix_msgs = {NumR, [Header | Rem], NumP, P}} = State) ->
     %% there are prefix returns, these should be served first
     {{'$prefix_msg', Header},
-     State#?MODULE{prefix_msgs = {Rem, P}}};
+     State#?MODULE{prefix_msgs = {NumR-1, Rem, NumP, P}}};
 take_next_msg(#?MODULE{returns = Returns,
                        low_msg_num = Low0,
                        messages = Messages0,
-                       prefix_msgs = {R, P}} = State) ->
+                       prefix_msgs = {NumR, R, NumP, P}} = State) ->
     %% use peek rather than out there as the most likely case is an empty
     %% queue
     case lqueue:peek(Returns) of
@@ -1413,10 +1443,10 @@ take_next_msg(#?MODULE{returns = Returns,
                 {Header, 'empty'} ->
                     %% There are prefix msgs
                     {{'$empty_msg', Header},
-                     State#?MODULE{prefix_msgs = {R, Rem}}};
+                     State#?MODULE{prefix_msgs = {NumR, R, NumP-1, Rem}}};
                 Header ->
                     {{'$prefix_msg', Header},
-                     State#?MODULE{prefix_msgs = {R, Rem}}}
+                     State#?MODULE{prefix_msgs = {NumR, R, NumP-1, Rem}}}
             end
     end.
 
@@ -1427,7 +1457,7 @@ send_log_effect({CTag, CPid}, IdxMsgs) ->
     {RaftIdxs, Data} = lists:unzip(IdxMsgs),
     {log, RaftIdxs,
      fun(Log) ->
-             Msgs = lists:zipwith(fun({enqueue, _, _, Msg}, {MsgId, Header}) ->
+             Msgs = lists:zipwith(fun ({enqueue, _, _, Msg}, {MsgId, Header}) ->
                                           {MsgId, {Header, Msg}}
                                   end, Log, Data),
              [{send_msg, CPid, {delivery, CTag, Msgs}, [local, ra_event]}]
@@ -1593,6 +1623,11 @@ maybe_queue_consumer(ConsumerId, #consumer{credit = Credit},
             ServiceQueue0
     end.
 
+convert_prefix_msgs(#?MODULE{prefix_msgs = {R, P}} = State) ->
+    State#?MODULE{prefix_msgs = {length(R), R, length(P), P}};
+convert_prefix_msgs(State) ->
+    State.
+
 %% creates a dehydrated version of the current state to be cached and
 %% potentially used to for a snaphot at a later point
 dehydrate_state(#?MODULE{messages = Messages,
@@ -1600,10 +1635,11 @@ dehydrate_state(#?MODULE{messages = Messages,
                          returns = Returns,
                          low_msg_num = Low,
                          next_msg_num = Next,
-                         prefix_msgs = {PrefRet0, PrefMsg0},
+                         prefix_msgs = {PRCnt, PrefRet0, PPCnt, PrefMsg0},
                          waiting_consumers = Waiting0} = State) ->
+    RCnt = lqueue:len(Returns),
     %% TODO: optimise this function as far as possible
-    PrefRet = lists:foldl(fun ({'$prefix_msg', Header}, Acc) ->
+    PrefRet1 = lists:foldr(fun ({'$prefix_msg', Header}, Acc) ->
                                   [Header | Acc];
                               ({'$empty_msg', _} = Msg, Acc) ->
                                   [Msg | Acc];
@@ -1612,8 +1648,9 @@ dehydrate_state(#?MODULE{messages = Messages,
                               ({_, {_, {Header, _}}}, Acc) ->
                                   [Header | Acc]
                           end,
-                          lists:reverse(PrefRet0),
+                          [],
                           lqueue:to_list(Returns)),
+    PrefRet = PrefRet0 ++ PrefRet1,
     PrefMsgsSuff = dehydrate_messages(Low, Next - 1, Messages, []),
     %% prefix messages are not populated in normal operation only after
     %% recovering from a snapshot
@@ -1627,8 +1664,8 @@ dehydrate_state(#?MODULE{messages = Messages,
                                                dehydrate_consumer(C)
                                        end, Consumers),
                   returns = lqueue:new(),
-                  prefix_msgs = {lists:reverse(PrefRet),
-                                 PrefMsgs},
+                  prefix_msgs = {PRCnt + RCnt, PrefRet,
+                                 PPCnt + maps:size(Messages), PrefMsgs},
                   waiting_consumers = Waiting}.
 
 dehydrate_messages(Low, Next, _Msgs, Acc)

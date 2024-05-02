@@ -11,10 +11,13 @@
 %% The Original Code is RabbitMQ Federation.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_federation_queue_link).
+
+%% pg2 is deprecated in OTP 23.
+-compile(nowarn_deprecated_function).
 
 -include_lib("rabbit/include/amqqueue.hrl").
 -include_lib("amqp_client/include/amqp_client.hrl").
@@ -176,8 +179,7 @@ handle_info({'DOWN', _Ref, process, Pid, Reason},
                            upstream_params = UParams,
                            queue           = Q}) when ?is_amqqueue(Q) ->
     QName = amqqueue:get_name(Q),
-    rabbit_federation_link_util:handle_down(
-      Pid, Reason, Ch, DCh, {Upstream, UParams, QName}, State);
+    handle_down(Pid, Reason, Ch, DCh, {Upstream, UParams, QName}, State);
 
 handle_info(Msg, State) ->
     {stop, {unexpected_info, Msg}, State}.
@@ -330,3 +332,8 @@ cancel(Ch, Upstream) ->
     ConsumerTag = consumer_tag(Upstream),
     amqp_channel:cast(Ch, #'basic.cancel'{nowait       = true,
                                           consumer_tag = ConsumerTag}).
+
+handle_down(DCh, Reason, _Ch, DCh, Args, State) ->
+    rabbit_federation_link_util:handle_downstream_down(Reason, Args, State);
+handle_down(Ch, Reason, Ch, _DCh, Args, State) ->
+    rabbit_federation_link_util:handle_upstream_down(Reason, Args, State).

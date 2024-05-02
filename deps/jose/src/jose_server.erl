@@ -1,12 +1,12 @@
 %% -*- mode: erlang; tab-width: 4; indent-tabs-mode: 1; st-rulers: [70] -*-
 %% vim: ts=4 sw=4 ft=erlang noet
 %%%-------------------------------------------------------------------
-%%% @author Andrew Bennett <andrew@pixid.com>
+%%% @author Andrew Bennett <potatosaladx@gmail.com>
 %%% @copyright 2014-2015, Andrew Bennett
 %%% @doc
 %%%
 %%% @end
-%%% Created :  13 Aug 2015 by Andrew Bennett <andrew@pixid.com>
+%%% Created :  13 Aug 2015 by Andrew Bennett <potatosaladx@gmail.com>
 %%%-------------------------------------------------------------------
 -module(jose_server).
 -behaviour(gen_server).
@@ -23,6 +23,7 @@
 -export([curve448_module/1]).
 -export([json_module/1]).
 -export([sha3_module/1]).
+-export([xchacha20_poly1305_module/1]).
 
 %% gen_server callbacks
 -export([init/1]).
@@ -59,11 +60,11 @@ start_link() ->
 config_change() ->
 	gen_server:call(?SERVER, config_change).
 
-curve25519_module(Curve25519Module) when is_atom(Curve25519Module) ->
-	gen_server:call(?SERVER, {curve25519_module, Curve25519Module}).
-
 chacha20_poly1305_module(ChaCha20Poly1305Module) when is_atom(ChaCha20Poly1305Module) ->
 	gen_server:call(?SERVER, {chacha20_poly1305_module, ChaCha20Poly1305Module}).
+
+curve25519_module(Curve25519Module) when is_atom(Curve25519Module) ->
+	gen_server:call(?SERVER, {curve25519_module, Curve25519Module}).
 
 curve448_module(Curve448Module) when is_atom(Curve448Module) ->
 	gen_server:call(?SERVER, {curve448_module, Curve448Module}).
@@ -73,6 +74,9 @@ json_module(JSONModule) when is_atom(JSONModule) ->
 
 sha3_module(SHA3Module) when is_atom(SHA3Module) ->
 	gen_server:call(?SERVER, {sha3_module, SHA3Module}).
+
+xchacha20_poly1305_module(XChaCha20Poly1305Module) when is_atom(XChaCha20Poly1305Module) ->
+	gen_server:call(?SERVER, {xchacha20_poly1305_module, XChaCha20Poly1305Module}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -114,6 +118,12 @@ handle_call({sha3_module, M}, _From, State) ->
 	SHA3Module = check_sha3_module(M),
 	true = ets:insert(?TAB, {sha3_module, SHA3Module}),
 	{reply, ok, State};
+handle_call({xchacha20_poly1305_module, M}, _From, State) ->
+	XChaCha20Poly1305Module = check_xchacha20_poly1305_module(M),
+	Entries = lists:flatten(check_crypto(?CRYPTO_FALLBACK, [{xchacha20_poly1305_module, XChaCha20Poly1305Module}])),
+	_ = ets:select_delete(?TAB, [{{{cipher, '_'}, '_'}, [], [true]}]),
+	true = ets:insert(?TAB, Entries),
+	{reply, ok, State};
 handle_call(_Request, _From, State) ->
 	{reply, ignore, State}.
 
@@ -145,6 +155,7 @@ support_check() ->
 	end, [], [
 		fun check_ec_key_mode/2,
 		fun check_chacha20_poly1305/2,
+		fun check_xchacha20_poly1305/2,
 		fun check_curve25519/2,
 		fun check_curve448/2,
 		fun check_json/2,
@@ -334,7 +345,7 @@ check_json(_Fallback, Entries) ->
 				undefined ->
 					case code:ensure_loaded(elixir) of
 						{module, elixir} ->
-							check_json_modules([ojson, 'Elixir.Poison', jiffy, jsone, jsx]);
+							check_json_modules([ojson, 'Elixir.Jason', 'Elixir.Poison', jiffy, jsone, jsx]);
 						_ ->
 							check_json_modules([ojson, jiffy, jsone, jsx])
 					end;
@@ -353,6 +364,8 @@ check_json_module(jsone) ->
 	jose_json_jsone;
 check_json_module(ojson) ->
 	jose_json_ojson;
+check_json_module('Elixir.Jason') ->
+	jose_json_jason;
 check_json_module('Elixir.Poison') ->
 	Map = ?POISON_MAP,
 	Bin = ?POISON_BIN,
@@ -473,7 +486,7 @@ check_crypto(Fallback, Entries) ->
 		192,
 		256
 	],
-	CipherEntries = [begin
+	CipherEntries0 = [begin
 		case has_cipher(Cipher, KeySize) of
 			false ->
 				{{cipher, {Cipher, KeySize}}, {Fallback, {Cipher, KeySize}}};
@@ -481,12 +494,21 @@ check_crypto(Fallback, Entries) ->
 				{{cipher, {Cipher, KeySize}}, {crypto, CryptoCipher}}
 		end
 	end || Cipher <- Ciphers, KeySize <- KeySizes],
-	case lists:keyfind(chacha20_poly1305_module, 1, Entries) of
-		{chacha20_poly1305_module, jose_chacha20_poly1305_unsupported} ->
-			[CipherEntries ++ [{{cipher, {chacha20_poly1305, 256}}, {Fallback, {chacha20_poly1305, 256}}}] | Entries];
-		_ ->
-			[CipherEntries ++ [{{cipher, {chacha20_poly1305, 256}}, {jose_chacha20_poly1305, {chacha20_poly1305, 256}}}] | Entries]
-	end.
+	CipherEntries1 = 
+		case lists:keyfind(chacha20_poly1305_module, 1, Entries) of
+			{chacha20_poly1305_module, jose_chacha20_poly1305_unsupported} ->
+				CipherEntries0 ++ [{{cipher, {chacha20_poly1305, 256}}, {Fallback, {chacha20_poly1305, 256}}}];
+			_ ->
+				CipherEntries0 ++ [{{cipher, {chacha20_poly1305, 256}}, {jose_chacha20_poly1305, {chacha20_poly1305, 256}}}]
+		end,
+	CipherEntries2 =
+		case lists:keyfind(xchacha20_poly1305_module, 1, Entries) of
+			{xchacha20_poly1305_module, jose_xchacha20_poly1305_unsupported} ->
+				CipherEntries1 ++ [{{cipher, {xchacha20_poly1305, 256}}, {Fallback, {xchacha20_poly1305, 256}}}];
+			_ ->
+				CipherEntries1 ++ [{{cipher, {xchacha20_poly1305, 256}}, {jose_xchacha20_poly1305, {xchacha20_poly1305, 256}}}]
+		end,
+	[CipherEntries2 | Entries].
 
 %% @private
 check_public_key(Fallback, Entries) ->
@@ -555,6 +577,66 @@ check_rsa_sign(Fallback) ->
 	SignEntries.
 
 %% @private
+check_xchacha20_poly1305(false, Entries) ->
+	check_xchacha20_poly1305(jose_xchacha20_poly1305_unsupported, Entries);
+check_xchacha20_poly1305(true, Entries) ->
+	check_xchacha20_poly1305(jose_jwa_xchacha20_poly1305, Entries);
+check_xchacha20_poly1305(Fallback, Entries) ->
+	true = ets:delete_object(?TAB, {xchacha20_poly1305_module, jose_jwa_xchacha20_poly1305}),
+	true = ets:delete_object(?TAB, {xchacha20_poly1305_module, jose_xchacha20_poly1305_unsupported}),
+	ChaCha20Poly1305Module = case ets:lookup(?TAB, xchacha20_poly1305_module) of
+		[{xchacha20_poly1305_module, M}] when is_atom(M) ->
+			M;
+		[] ->
+			case application:get_env(jose, xchacha20_poly1305_module, undefined) of
+				undefined ->
+					check_xchacha20_poly1305_modules(Fallback, [crypto]);
+				M when is_atom(M) ->
+					check_xchacha20_poly1305_module(M)
+			end
+	end,
+	[{xchacha20_poly1305_module, ChaCha20Poly1305Module} | Entries].
+
+%% @private
+check_xchacha20_poly1305_module(crypto) ->
+	jose_xchacha20_poly1305_crypto;
+check_xchacha20_poly1305_module(Module) when is_atom(Module) ->
+	Module.
+
+%% @private
+check_xchacha20_poly1305_modules(Fallback, [Module | Modules]) ->
+	case code:ensure_loaded(Module) of
+		{module, Module} ->
+			_ = application:ensure_all_started(Module),
+			M = check_xchacha20_poly1305_module(Module),
+			PT = crypto:strong_rand_bytes(8),
+			CEK = crypto:strong_rand_bytes(32),
+			IV = crypto:strong_rand_bytes(24),
+			AAD = <<>>,
+			try M:encrypt(PT, AAD, IV, CEK) of
+				{CT, TAG} when is_binary(CT) andalso is_binary(TAG) ->
+					try M:decrypt(CT, TAG, AAD, IV, CEK) of
+						PT ->
+							M;
+						_ ->
+							check_xchacha20_poly1305_modules(Fallback, Modules)
+					catch
+						_:_ ->
+							check_xchacha20_poly1305_modules(Fallback, Modules)
+					end;
+				_ ->
+					check_xchacha20_poly1305_modules(Fallback, Modules)
+			catch
+				_:_ ->
+					check_xchacha20_poly1305_modules(Fallback, Modules)
+			end;
+		_ ->
+			check_xchacha20_poly1305_modules(Fallback, Modules)
+	end;
+check_xchacha20_poly1305_modules(Fallback, []) ->
+	Fallback.
+
+%% @private
 has_cipher(aes_cbc, KeySize) ->
 	Key = << 0:KeySize >>,
 	IV = << 0:128 >>,
@@ -616,7 +698,7 @@ has_block_cipher(Cipher, {Key, IV, AAD, PlainText}) ->
 	end.
 
 %% @private
-has_rsa_crypt(_Algorithm, future, _LegacyOptions, FutureOptions) ->
+has_rsa_crypt(Algorithm, future, _LegacyOptions, FutureOptions) ->
 	PlainText = << 0:8 >>,
 	PublicKey = rsa_public_key(),
 	case catch public_key:encrypt_public(PlainText, PublicKey, FutureOptions) of
@@ -624,7 +706,12 @@ has_rsa_crypt(_Algorithm, future, _LegacyOptions, FutureOptions) ->
 			PrivateKey = rsa_private_key(),
 			case catch public_key:decrypt_private(CipherText, PrivateKey, FutureOptions) of
 				PlainText ->
-					{true, public_key, FutureOptions};
+					case catch public_key:decrypt_private(rsa_ciphertext(Algorithm), PrivateKey, FutureOptions) of
+						<<"ciphertext">> ->
+							{true, public_key, FutureOptions};
+						_ ->
+							false
+					end;
 				_ ->
 					false
 			end;
@@ -633,7 +720,7 @@ has_rsa_crypt(_Algorithm, future, _LegacyOptions, FutureOptions) ->
 	end;
 has_rsa_crypt(_Algorithm, legacy, notsup, _FutureOptions) ->
 	false;
-has_rsa_crypt(_Algorithm, legacy, LegacyOptions, _FutureOptions) ->
+has_rsa_crypt(Algorithm, legacy, LegacyOptions, _FutureOptions) ->
 	PlainText = << 0:8 >>,
 	PublicKey = rsa_public_key(),
 	case catch public_key:encrypt_public(PlainText, PublicKey, LegacyOptions) of
@@ -641,7 +728,12 @@ has_rsa_crypt(_Algorithm, legacy, LegacyOptions, _FutureOptions) ->
 			PrivateKey = rsa_private_key(),
 			case catch public_key:decrypt_private(CipherText, PrivateKey, LegacyOptions) of
 				PlainText ->
-					{true, public_key, LegacyOptions};
+					case catch public_key:decrypt_private(rsa_ciphertext(Algorithm), PrivateKey, LegacyOptions) of
+						<<"ciphertext">> ->
+							{true, public_key, LegacyOptions};
+						_ ->
+							false
+					end;
 				_ ->
 					false
 			end;
@@ -687,6 +779,53 @@ has_rsa_sign(_Padding, legacy, _DigestType) ->
 %% @private
 read_pem_key(PEM) ->
 	public_key:pem_entry_decode(hd(public_key:pem_decode(PEM))).
+
+%% @private
+rsa_ciphertext(rsa1_5) ->
+	<<
+		16#67, 16#3F, 16#BF, 16#D4, 16#93, 16#1E, 16#6C, 16#54,
+		16#67, 16#DE, 16#29, 16#3C, 16#71, 16#5F, 16#95, 16#BE,
+		16#69, 16#99, 16#D3, 16#6C, 16#E4, 16#81, 16#1E, 16#49,
+		16#BE, 16#5D, 16#91, 16#85, 16#E7, 16#1D, 16#04, 16#C5,
+		16#38, 16#0A, 16#6F, 16#3F, 16#32, 16#2C, 16#3D, 16#67,
+		16#53, 16#B1, 16#EA, 16#D7, 16#2E, 16#ED, 16#6A, 16#7A,
+		16#EB, 16#49, 16#79, 16#71, 16#CA, 16#F5, 16#71, 16#67,
+		16#FA, 16#8B, 16#B8, 16#A8, 16#30, 16#59, 16#2E, 16#88,
+		16#98, 16#19, 16#AE, 16#B2, 16#94, 16#BA, 16#6E, 16#D2,
+		16#EF, 16#28, 16#BE, 16#04, 16#4F, 16#90, 16#77, 16#CA,
+		16#3D, 16#11, 16#2B, 16#E7, 16#17, 16#D8, 16#89, 16#7F,
+		16#EC, 16#7A, 16#2C, 16#70, 16#A5, 16#08, 16#FB, 16#5B
+	>>;
+rsa_ciphertext(rsa_oaep) ->
+	<<
+		16#B8, 16#F7, 16#0C, 16#A8, 16#F8, 16#30, 16#2A, 16#E9,
+		16#68, 16#8A, 16#DB, 16#3E, 16#5D, 16#AE, 16#84, 16#A7,
+		16#16, 16#FA, 16#9D, 16#E2, 16#FC, 16#81, 16#F7, 16#DF,
+		16#A8, 16#DB, 16#8F, 16#4F, 16#92, 16#A1, 16#51, 16#9E,
+		16#6B, 16#C5, 16#36, 16#CE, 16#93, 16#10, 16#11, 16#D9,
+		16#D5, 16#C2, 16#C9, 16#85, 16#14, 16#EF, 16#D5, 16#C3,
+		16#AC, 16#63, 16#BE, 16#49, 16#FA, 16#02, 16#1A, 16#FC,
+		16#3D, 16#D0, 16#2C, 16#83, 16#C5, 16#76, 16#1D, 16#F5,
+		16#FA, 16#A0, 16#D7, 16#42, 16#ED, 16#3F, 16#A4, 16#12,
+		16#32, 16#14, 16#93, 16#51, 16#79, 16#2E, 16#40, 16#FB,
+		16#14, 16#18, 16#DF, 16#30, 16#62, 16#9F, 16#F3, 16#59,
+		16#5D, 16#83, 16#0F, 16#4A, 16#8F, 16#9B, 16#3F, 16#39
+	>>;
+rsa_ciphertext(rsa_oaep_256) ->
+	<<
+		16#09, 16#24, 16#EA, 16#EB, 16#D4, 16#EF, 16#00, 16#BE,
+		16#8E, 16#02, 16#BE, 16#25, 16#24, 16#24, 16#18, 16#81,
+		16#8D, 16#7A, 16#A2, 16#EB, 16#F1, 16#BE, 16#5C, 16#DC,
+		16#D0, 16#71, 16#43, 16#09, 16#53, 16#12, 16#44, 16#AD,
+		16#8A, 16#CD, 16#F8, 16#45, 16#7F, 16#1F, 16#30, 16#B6,
+		16#54, 16#8E, 16#AB, 16#D2, 16#10, 16#14, 16#BC, 16#CE,
+		16#7A, 16#99, 16#DC, 16#A6, 16#8D, 16#16, 16#5A, 16#A0,
+		16#50, 16#3A, 16#93, 16#0E, 16#53, 16#4A, 16#B5, 16#6B,
+		16#51, 16#E8, 16#43, 16#8F, 16#BD, 16#2D, 16#E0, 16#63,
+		16#36, 16#24, 16#5B, 16#8D, 16#DD, 16#98, 16#AC, 16#37,
+		16#7C, 16#16, 16#DB, 16#03, 16#C8, 16#BD, 16#22, 16#D2,
+		16#15, 16#98, 16#91, 16#B7, 16#3C, 16#01, 16#CF, 16#0E
+	>>.
 
 %% @private
 rsa_public_key() ->

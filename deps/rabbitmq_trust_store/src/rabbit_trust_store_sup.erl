@@ -10,7 +10,7 @@
 %%
 %% The Original Code is RabbitMQ.
 %%
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_trust_store_sup).
@@ -30,7 +30,18 @@ start_link() ->
 %% ...
 
 init([]) ->
-    {ok,
-     {{one_for_one, 1, 5},
-      [{trust_store, {rabbit_trust_store, start_link, []},
-        permanent, timer:seconds(5), worker, [rabbit_trust_store]}]}}.
+    Flags = #{strategy => one_for_one,
+              intensity => 10,
+              period => 1},
+    ChildSpecs = [
+        #{
+            id => trust_store,
+            start => {rabbit_trust_store, start_link, []},
+            restart => permanent,
+            shutdown => timer:seconds(15),
+            type => worker,
+            modules => [rabbit_trust_store]
+        }
+    ],
+
+    {ok, {Flags, ChildSpecs}}.

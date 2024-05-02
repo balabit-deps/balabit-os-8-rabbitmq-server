@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(delegate).
@@ -218,8 +218,8 @@ safe_invoke(Pids, FunOrMFA) when is_list(Pids) ->
 safe_invoke(Pid, FunOrMFA) when is_pid(Pid) ->
     try
         {ok, Pid, apply1(FunOrMFA, Pid)}
-    catch Class:Reason ->
-            {error, Pid, {Class, Reason, erlang:get_stacktrace()}}
+    catch Class:Reason:Stacktrace ->
+            {error, Pid, {Class, Reason, Stacktrace}}
     end.
 
 apply1({M, F, A}, Arg) -> apply(M, F, [Arg | A]);

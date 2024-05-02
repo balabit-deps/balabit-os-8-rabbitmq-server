@@ -1,12 +1,12 @@
 %% -*- mode: erlang; tab-width: 4; indent-tabs-mode: 1; st-rulers: [70] -*-
 %% vim: ts=4 sw=4 ft=erlang noet
 %%%-------------------------------------------------------------------
-%%% @author Andrew Bennett <andrew@pixid.com>
+%%% @author Andrew Bennett <potatosaladx@gmail.com>
 %%% @copyright 2014-2015, Andrew Bennett
 %%% @doc
 %%%
 %%% @end
-%%% Created :  20 Jul 2015 by Andrew Bennett <andrew@pixid.com>
+%%% Created :  20 Jul 2015 by Andrew Bennett <potatosaladx@gmail.com>
 %%%-------------------------------------------------------------------
 -module(jose).
 
@@ -27,6 +27,8 @@
 -export([sha3_module/1]).
 -export([unsecured_signing/0]).
 -export([unsecured_signing/1]).
+-export([xchacha20_poly1305_module/0]).
+-export([xchacha20_poly1305_module/1]).
 %% Private API
 -export([start/0]).
 
@@ -93,6 +95,12 @@ unsecured_signing() ->
 
 unsecured_signing(Boolean) when is_boolean(Boolean) ->
 	jose_jwa:unsecured_signing(Boolean).
+
+xchacha20_poly1305_module() ->
+	?MAYBE_START_JOSE(ets:lookup_element(?TAB, xchacha20_poly1305_module, 2)).
+
+xchacha20_poly1305_module(XChaCha20Poly1305Module) when is_atom(XChaCha20Poly1305Module) ->
+	?MAYBE_START_JOSE(jose_server:xchacha20_poly1305_module(XChaCha20Poly1305Module)).
 
 %%====================================================================
 %% Private API functions
