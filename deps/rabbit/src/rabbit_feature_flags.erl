@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2018-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2018-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 %% @author The RabbitMQ team
@@ -508,8 +508,8 @@ is_supported_remotely([Node | Rest], FeatureNames, Timeout) ->
             false
     end;
 is_supported_remotely([], FeatureNames, _) ->
-    rabbit_log:info("Feature flags: all running remote nodes support `~p`",
-                    [FeatureNames]),
+    rabbit_log:debug("Feature flags: all running remote nodes support `~p`",
+                     [FeatureNames]),
     true.
 
 -spec is_enabled(feature_name() | [feature_name()]) -> boolean().
@@ -676,8 +676,8 @@ info(Options) when is_map(Options) ->
 %% @returns `enabled', `disabled' or `unavailable'.
 
 get_state(FeatureName) when is_atom(FeatureName) ->
-    IsEnabled = rabbit_feature_flags:is_enabled(FeatureName),
-    IsSupported = rabbit_feature_flags:is_supported(FeatureName),
+    IsEnabled = is_enabled(FeatureName),
+    IsSupported = is_supported(FeatureName),
     case IsEnabled of
         true  -> enabled;
         false -> case IsSupported of
@@ -2293,7 +2293,7 @@ on_load() ->
         true ->
             %% RabbitMQ is running.
             %%
-            %% Now we want to differenciate a pre-feature-flags node
+            %% Now we want to differentiate a pre-feature-flags node
             %% from one having the subsystem.
             %%
             %% To do that, we verify if the `feature_flags_file`

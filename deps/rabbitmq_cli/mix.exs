@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQCtl.MixfileBase do
   use Mix.Project
@@ -20,7 +20,7 @@ defmodule RabbitMQCtl.MixfileBase do
     [
       app: :rabbitmqctl,
       version: "3.8.0-dev",
-      elixir: ">= 1.7.0 and < 1.10.0",
+      elixir: ">= 1.7.0 and < 1.11.0",
       build_embedded: Mix.env == :prod,
       start_permanent: Mix.env == :prod,
       escript: [main_module: RabbitMQCtl,
@@ -98,7 +98,7 @@ defmodule RabbitMQCtl.MixfileBase do
   defp deps() do
     elixir_deps = [
       {:json, "~> 1.2.0"},
-      {:csv, "~> 2.0.0"},
+      {:csv, "~> 2.3.0"},
       {:stdout_formatter, "~> 0.2.3"},
       {:observer_cli, "~> 1.5.0"},
 

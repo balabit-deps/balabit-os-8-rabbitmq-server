@@ -11,10 +11,13 @@
 %%   The Original Code is RabbitMQ Management Console.
 %%
 %%   The Initial Developer of the Original Code is GoPivotal, Inc.
-%%   Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%%   Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_mgmt_agent_sup).
+
+%% pg2 is deprecated in OTP 23.
+-compile(nowarn_deprecated_function).
 
 -behaviour(supervisor).
 

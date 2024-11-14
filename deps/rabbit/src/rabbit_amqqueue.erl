@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_amqqueue).
@@ -22,7 +22,7 @@
          forget_all_durable/1, delete_crashed/1, delete_crashed/2,
          delete_crashed_internal/2]).
 -export([pseudo_queue/2, pseudo_queue/3, immutable/1]).
--export([lookup/1, not_found_or_absent/1, with/2, with/3, with_or_die/2,
+-export([lookup/1, lookup_many/1, not_found_or_absent/1, with/2, with/3, with_or_die/2,
          assert_equivalence/5,
          check_exclusive_access/2, with_exclusive_access_or_die/3,
          stat/1, deliver/2, deliver/3, requeue/4, ack/4, reject/5]).
@@ -32,8 +32,9 @@
          emit_info_local/4, emit_info_down/4]).
 -export([count/0]).
 -export([list_down/1, count/1, list_names/0, list_names/1, list_local_names/0,
+         list_local_mirrored_classic_names/0,
          list_local_names_down/0, list_with_possible_retry/1]).
--export([list_by_type/1]).
+-export([list_by_type/1, sample_local_queues/0, sample_n_by_name/2, sample_n/2]).
 -export([force_event_refresh/1, notify_policy_changed/1]).
 -export([consumers/1, consumers_all/1,  emit_consumers_all/4, consumer_info_keys/0]).
 -export([basic_get/6, basic_consume/12, basic_cancel/6, notify_decorators/1]).
@@ -43,9 +44,12 @@
 -export([update/2, store_queue/1, update_decorators/1, policy_changed/2]).
 -export([update_mirroring/1, sync_mirrors/1, cancel_sync_mirrors/1]).
 -export([emit_unresponsive/6, emit_unresponsive_local/5, is_unresponsive/2]).
+-export([has_synchronised_mirrors_online/1]).
 -export([is_replicated/1, is_dead_exclusive/1]). % Note: exported due to use in qlc expression.
--export([list_local_followers/0,
-         get_quorum_nodes/1]).
+-export([list_local_quorum_queues/0, list_local_quorum_queue_names/0,
+         list_local_leaders/0, list_local_followers/0, get_quorum_nodes/1,
+         list_local_mirrored_classic_without_synchronised_mirrors/0,
+         list_local_mirrored_classic_without_synchronised_mirrors_for_cli/0]).
 -export([ensure_rabbit_queue_record_is_initialized/1]).
 -export([format/1]).
 -export([delete_immediately_by_resource/1]).
@@ -55,6 +59,8 @@
 
 -export([rebalance/3]).
 -export([collect_info_all/2]).
+
+-export([is_policy_applicable/2]).
 
 %% internal
 -export([internal_declare/2, internal_delete/2, run_backing_queue/3,
@@ -455,6 +461,17 @@ policy_changed(Q1, Q2) ->
     %% mirroring-related has changed - the policy may have changed anyway.
     notify_policy_changed(Q1).
 
+is_policy_applicable(QName, Policy) ->
+    case lookup(QName) of
+        {ok, Q} when ?amqqueue_is_quorum(Q) ->
+            rabbit_quorum_queue:is_policy_applicable(Q, Policy);
+        {ok, Q} when ?amqqueue_is_classic(Q) ->
+            rabbit_amqqueue_process:is_policy_applicable(Q, Policy);
+        _ ->
+            %% Defaults to previous behaviour. Apply always
+            true
+    end.
+
 -spec lookup
         (name()) ->
             rabbit_types:ok(amqqueue:amqqueue()) |
@@ -470,6 +487,11 @@ lookup(Names) when is_list(Names) ->
     lists:append([ets:lookup(rabbit_queue, Name) || Name <- Names]);
 lookup(Name) ->
     rabbit_misc:dirty_read({rabbit_queue, Name}).
+
+-spec lookup_many ([name()]) -> [amqqueue:amqqueue()].
+
+lookup_many(Names) when is_list(Names) ->
+    lookup(Names).
 
 -spec not_found_or_absent(name()) -> not_found_or_absent().
 
@@ -492,9 +514,29 @@ not_found_or_absent_dirty(Name) ->
         {ok, Q}            -> {absent, Q, nodedown}
     end.
 
+-spec get_rebalance_lock(pid()) ->
+    {true, {rebalance_queues, pid()}} | false.
+get_rebalance_lock(Pid) when is_pid(Pid) ->
+    Id = {rebalance_queues, Pid},
+    Nodes = [node()|nodes()],
+    %% Note that we're not re-trying. We want to immediately know
+    %% if a re-balance is taking place and stop accordingly.
+    case global:set_lock(Id, Nodes, 0) of
+        true ->
+            {true, Id};
+        false ->
+            false
+    end.
+
 -spec rebalance('all' | 'quorum' | 'classic', binary(), binary()) ->
-                       {ok, [{node(), pos_integer()}]}.
+                       {ok, [{node(), pos_integer()}]} | {error, term()}.
 rebalance(Type, VhostSpec, QueueSpec) ->
+    %% We have not yet acquired the rebalance_queues global lock.
+    maybe_rebalance(get_rebalance_lock(self()), Type, VhostSpec, QueueSpec).
+
+maybe_rebalance({true, Id}, Type, VhostSpec, QueueSpec) ->
+    rabbit_log:info("Starting queue rebalance operation: '~s' for vhosts matching '~s' and queues matching '~s'",
+                    [Type, VhostSpec, QueueSpec]),
     Running = rabbit_mnesia:cluster_nodes(running),
     NumRunning = length(Running),
     ToRebalance = [Q || Q <- rabbit_amqqueue:list(),
@@ -505,11 +547,17 @@ rebalance(Type, VhostSpec, QueueSpec) ->
     NumToRebalance = length(ToRebalance),
     ByNode = group_by_node(ToRebalance),
     Rem = case (NumToRebalance rem NumRunning) of
-              0 -> 0;
-              _ -> 1
-          end,
+            0 -> 0;
+            _ -> 1
+        end,
     MaxQueuesDesired = (NumToRebalance div NumRunning) + Rem,
-    iterative_rebalance(ByNode, MaxQueuesDesired).
+    Result = iterative_rebalance(ByNode, MaxQueuesDesired),
+    global:del_lock(Id),
+    rabbit_log:info("Finished queue rebalance operation"),
+    Result;
+maybe_rebalance(false, _Type, _VhostSpec, _QueueSpec) ->
+    rabbit_log:warning("Queue rebalance operation is in progress, please wait."),
+    {error, rebalance_in_progress}.
 
 filter_per_type(all, _) ->
     true;
@@ -743,7 +791,13 @@ priv_absent(QueueName, _QPid, _IsDurable, crashed) ->
 priv_absent(QueueName, _QPid, _IsDurable, timeout) ->
     rabbit_misc:protocol_error(
       not_found,
-      "failed to perform operation on ~s due to timeout", [rabbit_misc:rs(QueueName)]).
+      "failed to perform operation on ~s due to timeout", [rabbit_misc:rs(QueueName)]);
+
+priv_absent(QueueName, QPid, _IsDurable, alive) ->
+    rabbit_misc:protocol_error(
+      not_found,
+      "failed to perform operation on ~s: its master replica ~w may be stopping or being demoted",
+      [rabbit_misc:rs(QueueName), QPid]).
 
 -spec assert_equivalence
         (amqqueue:amqqueue(), boolean(), boolean(),
@@ -955,8 +1009,41 @@ is_down(Q) ->
             true
     end.
 
+
+-spec sample_local_queues() -> [amqqueue:amqqueue()].
+sample_local_queues() -> sample_n_by_name(list_local_names(), 300).
+
+-spec sample_n_by_name([rabbit_amqqueue:name()], pos_integer()) -> [amqqueue:amqqueue()].
+sample_n_by_name([], _N) ->
+    [];
+sample_n_by_name(Names, N) when is_list(Names) andalso is_integer(N) andalso N > 0 ->
+    %% lists:nth/2 throws when position is > list length
+    M = erlang:min(N, length(Names)),
+    Ids = lists:foldl(fun( _, Acc) when length(Acc) >= 100 ->
+                            Acc;
+                        (_, Acc) ->
+                            Pick = lists:nth(rand:uniform(M), Names),
+                            [Pick | Acc]
+                     end,
+         [], lists:seq(1, M)),
+    lists:map(fun (Id) ->
+                {ok, Q} = rabbit_amqqueue:lookup(Id),
+                Q
+              end,
+              lists:usort(Ids)).
+
+-spec sample_n([amqqueue:amqqueue()], pos_integer()) -> [amqqueue:amqqueue()].
+sample_n([], _N) ->
+    [];
+sample_n(Queues, N) when is_list(Queues) andalso is_integer(N) andalso N > 0 ->
+    Names = [amqqueue:get_name(Q) || Q <- Queues],
+    sample_n_by_name(Names, N).
+
+
 -spec list_by_type(atom()) -> [amqqueue:amqqueue()].
 
+list_by_type(classic) -> list_by_type(rabbit_classic_queue);
+list_by_type(quorum)  -> list_by_type(rabbit_quorum_queue);
 list_by_type(Type) ->
     {atomic, Qs} =
         mnesia:sync_transaction(
@@ -967,11 +1054,61 @@ list_by_type(Type) ->
           end),
     Qs.
 
-list_local_followers() ->
-    [ amqqueue:get_name(Q)
-      || Q <- list(),
+-spec list_local_quorum_queue_names() -> [rabbit_amqqueue:name()].
+
+list_local_quorum_queue_names() ->
+    [ amqqueue:get_name(Q) || Q <- list_by_type(quorum),
+           amqqueue:get_state(Q) =/= crashed,
+           lists:member(node(), get_quorum_nodes(Q))].
+
+-spec list_local_quorum_queues() -> [amqqueue:amqqueue()].
+list_local_quorum_queues() ->
+    [ Q || Q <- list_by_type(quorum),
+      amqqueue:get_state(Q) =/= crashed,
+      lists:member(node(), get_quorum_nodes(Q))].
+
+-spec list_local_leaders() -> [amqqueue:amqqueue()].
+list_local_leaders() ->
+    [ Q || Q <- list(),
          amqqueue:is_quorum(Q),
-         amqqueue:get_state(Q) =/= crashed, amqqueue:get_leader(Q) =/= node(), lists:member(node(), get_quorum_nodes(Q))].
+         amqqueue:get_state(Q) =/= crashed, amqqueue:get_leader(Q) =:= node()].
+
+-spec list_local_followers() -> [amqqueue:amqqueue()].
+list_local_followers() ->
+    [ Q || Q <- list(),
+         amqqueue:is_quorum(Q),
+         amqqueue:get_state(Q) =/= crashed, amqqueue:get_leader(Q) =/= node(),
+        lists:member(node(), get_quorum_nodes(Q))].
+
+-spec list_local_mirrored_classic_names() -> [rabbit_amqqueue:name()].
+list_local_mirrored_classic_names() ->
+    [ amqqueue:get_name(Q) || Q <- list(),
+           amqqueue:get_state(Q) =/= crashed,
+           amqqueue:is_classic(Q),
+           is_local_to_node(amqqueue:get_pid(Q), node()),
+           is_replicated(Q)].
+
+-spec list_local_mirrored_classic_without_synchronised_mirrors() -> [amqqueue:amqqueue()].
+list_local_mirrored_classic_without_synchronised_mirrors() ->
+    [ Q || Q <- list(),
+         amqqueue:get_state(Q) =/= crashed,
+         amqqueue:is_classic(Q),
+         is_local_to_node(amqqueue:get_pid(Q), node()),
+         is_replicated(Q),
+         not has_synchronised_mirrors_online(Q)].
+
+-spec list_local_mirrored_classic_without_synchronised_mirrors_for_cli() -> [amqqueue:amqqueue()].
+list_local_mirrored_classic_without_synchronised_mirrors_for_cli() ->
+    ClassicQs = list_local_mirrored_classic_without_synchronised_mirrors(),
+    [begin
+         #resource{name = Name} = amqqueue:get_name(Q),
+         #{
+             <<"readable_name">> => rabbit_misc:rs(amqqueue:get_name(Q)),
+             <<"name">> => Name,
+             <<"virtual_host">> => amqqueue:get_vhost(Q),
+             <<"type">> => <<"quorum">>
+         }
+     end || Q <- ClassicQs].
 
 is_local_to_node(QPid, Node) when ?IS_CLASSIC(QPid) ->
     Node =:= node(QPid);
@@ -1818,6 +1955,13 @@ is_dead_exclusive(Q) when ?amqqueue_exclusive_owner_is(Q, none) ->
 is_dead_exclusive(Q) when ?amqqueue_exclusive_owner_is_pid(Q) ->
     Pid = amqqueue:get_pid(Q),
     not rabbit_mnesia:is_process_alive(Pid).
+
+-spec has_synchronised_mirrors_online(amqqueue:amqqueue()) -> boolean().
+has_synchronised_mirrors_online(Q) ->
+    %% a queue with all mirrors down would have no mirror pids.
+    %% We treat these as in sync intentionally to avoid false positives.
+    MirrorPids = amqqueue:get_sync_slave_pids(Q),
+    MirrorPids =/= [] andalso lists:any(fun rabbit_misc:is_process_alive/1, MirrorPids).
 
 -spec on_node_up(node()) -> 'ok'.
 

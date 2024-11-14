@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Diagnostics.Commands.CommandLineArgumentsCommand do
   alias RabbitMQ.CLI.Core.DocGuide
@@ -20,6 +20,10 @@ defmodule RabbitMQ.CLI.Diagnostics.Commands.CommandLineArgumentsCommand do
   def scopes(), do: [:diagnostics]
 
   use RabbitMQ.CLI.Core.MergesNoDefaults
+
+  def validate(_, %{formatter: "json"}) do
+    {:validation_failure, :unsupported_formatter}
+  end
   use RabbitMQ.CLI.Core.AcceptsNoPositionalArguments
 
   def run([], %{node: node_name}) do

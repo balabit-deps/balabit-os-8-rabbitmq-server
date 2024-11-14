@@ -1,10 +1,42 @@
 # Changelog
 
+## 1.10.1 (2020-01-08)
+
+* Fixes
+  * Add PEM/DER compatibility layer for PKCS-8 incompatibilities with various versions of OTP, `crypto`, and `public_key`; see [#82](https://github.com/potatosalad/erlang-jose/issues/82)
+
+## 1.10.0 (2020-01-03)
+
+* Enhancements
+  * Remove [base64url](https://github.com/dvv/base64url) dependency and include embedded version.
+  * Add support for `C20P` and `XC20P` encryption based on [draft-amringer-jose-chacha](https://tools.ietf.org/html/draft-amringer-jose-chacha-01) (ChaCha20/Poly1305 and XChaCha20/Poly1305).
+  * Add support for ECDH-ES keywrapping for AES-GCM, ChaCha20/Poly1305, and XChaCha20/Poly1305.
+  * Add support for PBES2 keywrapping for AES-GCM, ChaCha20/Poly1305, and XChaCha20/Poly1305.
+  * Add support for `ECDH-1PU` encryption based on [draft-madden-jose-ecdh-1pu](https://tools.ietf.org/html/draft-madden-jose-ecdh-1pu-02).
+  * Add support for reading/writing DER format (or PKCS8 format).
+
+* Fixes
+  * Fix PSS salt length (thanks to [@ntrepid8](https://github.com/ntrepid8), see [#65](https://github.com/potatosalad/erlang-jose/pull/65))
+  * Speed up and stabilize tests on CI environment.
+
+## 1.9.0 (2018-12-31)
+
+* Enhancements
+  * Add support for [Jason](https://github.com/michalmuskala/jason) JSON encoding and decoding.
+  * Add support for Poison 4.x and lexical ordering.
+  * Use `public_key` over `cutkey` for RSA key generation if available.
+  * Drop support for older versions of OTP (19+ now required).
+  * Relicense library under MIT license.
+
+* Fixes
+  * Add macro so the application compiles without warnings after `erlang:get_stacktrace/0` has been deprecated.
+  * Extra sanity check for RSA padding modes when falling back.
+
 ## 1.8.4 (2017-05-18)
 
 * Enhancements
   * Add support for reading and writing PEM files for Ed25519, Ed448, X25519, and X448 keys based on [draft-ietf-curdle-pkix](https://tools.ietf.org/html/draft-ietf-curdle-pkix).
-  * Add support for [ojson](https://github.com/potatosalad/erlang-ojson) adapter for encoding/decoding JSON.
+  * Add support for [ojson](https://github.com/potatosalad/erlang-json) adapter for encoding/decoding JSON.
 
 ## 1.8.3 (2017-03-30)
 

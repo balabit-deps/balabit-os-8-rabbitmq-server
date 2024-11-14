@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Diagnostics.Commands.ErlangCookieHashCommand do
   @behaviour RabbitMQ.CLI.CommandBehaviour
@@ -21,10 +21,14 @@ defmodule RabbitMQ.CLI.Diagnostics.Commands.ErlangCookieHashCommand do
   use RabbitMQ.CLI.Core.AcceptsNoPositionalArguments
 
   def run([], %{node: node_name, timeout: timeout}) do
-    :rabbit_misc.rpc_call(node_name, :rabbit_nodes_common, :cookie_hash, [], timeout)
+    :rabbit_data_coercion.to_binary(
+      :rabbit_misc.rpc_call(node_name, :rabbit_nodes_common, :cookie_hash, [], timeout))
   end
 
-  def output(result, _options) when is_list(result) do
+  def output(result, %{formatter: "json"}) do
+    {:ok, %{"result" => "ok", "value" => result}}
+  end
+  def output(result, _options) when is_bitstring(result) do
     {:ok, result}
   end
 

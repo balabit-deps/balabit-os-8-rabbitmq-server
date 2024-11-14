@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Core.Memory do
   alias RabbitMQ.CLI.InformationUnit, as: IU
@@ -96,7 +96,7 @@ defmodule RabbitMQ.CLI.Core.Memory do
       err           -> err
     end
   end
-  def parse_watermark(n) when is_float(n) do
+  def parse_watermark(n) when is_float(n) or is_integer(n) do
     n
   end
 

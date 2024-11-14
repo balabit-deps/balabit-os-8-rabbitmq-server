@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_definitions).
@@ -22,8 +22,14 @@
 %% import
 -export([import_raw/1, import_raw/2, import_parsed/1, import_parsed/2,
          apply_defs/2, apply_defs/3, apply_defs/4, apply_defs/5]).
-%% export
+
 -export([all_definitions/0]).
+-export([
+  list_users/0, list_vhosts/0, list_permissions/0, list_topic_permissions/0,
+  list_runtime_parameters/0, list_global_runtime_parameters/0, list_policies/0,
+  list_exchanges/0, list_queues/0, list_bindings/0,
+  is_internal_parameter/1
+]).
 -export([decode/1, decode/2, args/1]).
 
 -import(rabbit_misc, [pget/2]).
@@ -31,6 +37,26 @@
 %%
 %% API
 %%
+
+-type definition_category() :: 'users' |
+                               'vhosts' |
+                               'permissions' |
+                               'topic_permissions' |
+                               'parameters' |
+                               'global_parameters' |
+                               'policies' |
+                               'queues' |
+                               'bindings' |
+                               'exchanges'.
+
+-type definition_object() :: #{binary() => any()}.
+-type definition_list() :: [definition_object()].
+
+-type definitions() :: #{
+    definition_category() => definition_list()
+}.
+
+-export_type([definition_object/0, definition_list/0, definition_category/0, definitions/0]).
 
 maybe_load_definitions() ->
     %% this feature was a part of rabbitmq-management for a long time,
@@ -198,29 +224,19 @@ apply_defs(Map, ActingUser, VHost) when is_binary(VHost) ->
 apply_defs(Map, ActingUser, SuccessFun) when is_function(SuccessFun) ->
     Version = maps:get(rabbitmq_version, Map, maps:get(rabbit_version, Map, undefined)),
     try
-        rabbit_log:info("Importing users..."),
         for_all(users, ActingUser, Map,
                 fun(User, _Username) ->
                     rabbit_auth_backend_internal:put_user(User, Version, ActingUser)
                 end),
-        rabbit_log:info("Importing vhosts..."),
         for_all(vhosts,             ActingUser, Map, fun add_vhost/2),
         validate_limits(Map),
-        rabbit_log:info("Importing user permissions..."),
         for_all(permissions,        ActingUser, Map, fun add_permission/2),
-        rabbit_log:info("Importing topic permissions..."),
         for_all(topic_permissions,  ActingUser, Map, fun add_topic_permission/2),
-        rabbit_log:info("Importing parameters..."),
         for_all(parameters,         ActingUser, Map, fun add_parameter/2),
-        rabbit_log:info("Importing global parameters..."),
         for_all(global_parameters,  ActingUser, Map, fun add_global_parameter/2),
-        rabbit_log:info("Importing policies..."),
         for_all(policies,           ActingUser, Map, fun add_policy/2),
-        rabbit_log:info("Importing queues..."),
         for_all(queues,             ActingUser, Map, fun add_queue/2),
-        rabbit_log:info("Importing exchanges..."),
         for_all(exchanges,          ActingUser, Map, fun add_exchange/2),
-        rabbit_log:info("Importing bindings..."),
         for_all(bindings,           ActingUser, Map, fun add_binding/2),
         SuccessFun(),
         ok
@@ -238,15 +254,10 @@ apply_defs(Map, ActingUser, SuccessFun, VHost) when is_binary(VHost) ->
                     [VHost, ActingUser]),
     try
         validate_limits(Map, VHost),
-        rabbit_log:info("Importing parameters..."),
         for_all(parameters, ActingUser, Map, VHost, fun add_parameter/3),
-        rabbit_log:info("Importing policies..."),
         for_all(policies,   ActingUser, Map, VHost, fun add_policy/3),
-        rabbit_log:info("Importing queues..."),
         for_all(queues,     ActingUser, Map, VHost, fun add_queue/3),
-        rabbit_log:info("Importing exchanges..."),
         for_all(exchanges,  ActingUser, Map, VHost, fun add_exchange/3),
-        rabbit_log:info("Importing bindings..."),
         for_all(bindings,   ActingUser, Map, VHost, fun add_binding/3),
         SuccessFun()
     catch {error, E} -> {error, format(E)};
@@ -264,27 +275,31 @@ apply_defs(Map, ActingUser, SuccessFun, ErrorFun, VHost) ->
                     [VHost, ActingUser]),
     try
         validate_limits(Map, VHost),
-        rabbit_log:info("Importing parameters..."),
         for_all(parameters, ActingUser, Map, VHost, fun add_parameter/3),
-        rabbit_log:info("Importing policies..."),
         for_all(policies,   ActingUser, Map, VHost, fun add_policy/3),
-        rabbit_log:info("Importing queues..."),
         for_all(queues,     ActingUser, Map, VHost, fun add_queue/3),
-        rabbit_log:info("Importing exchanges..."),
         for_all(exchanges,  ActingUser, Map, VHost, fun add_exchange/3),
-        rabbit_log:info("Importing bindings..."),
         for_all(bindings,   ActingUser, Map, VHost, fun add_binding/3),
         SuccessFun()
     catch {error, E} -> ErrorFun(format(E));
           exit:E     -> ErrorFun(format(E))
     end.
 
-for_all(Name, ActingUser, Definitions, Fun) ->
-    case maps:get(rabbit_data_coercion:to_atom(Name), Definitions, undefined) of
+for_all(Category, ActingUser, Definitions, Fun) ->
+    case maps:get(rabbit_data_coercion:to_atom(Category), Definitions, undefined) of
         undefined -> ok;
-        List      -> [Fun(maps:from_list([{atomise_name(K), V} || {K, V} <- maps:to_list(M)]),
-                          ActingUser) ||
-                         M <- List, is_map(M)]
+        List      ->
+            case length(List) of
+                0 -> ok;
+                N -> rabbit_log:info("Importing ~p ~s...", [N, human_readable_category_name(Category)])
+            end,
+            [begin
+                 %% keys are expected to be atoms
+                 Atomized = maps:fold(fun (K, V, Acc) ->
+                                maps:put(rabbit_data_coercion:to_atom(K), V, Acc)
+                            end, #{}, M),
+                 Fun(Atomized, ActingUser)
+             end || M <- List, is_map(M)]
     end.
 
 for_all(Name, ActingUser, Definitions, VHost, Fun) ->
@@ -295,6 +310,14 @@ for_all(Name, ActingUser, Definitions, VHost, Fun) ->
                           ActingUser) ||
                          M <- List, is_map(M)]
     end.
+
+-spec human_readable_category_name(definition_category()) -> string().
+
+human_readable_category_name(topic_permissions) -> "topic permissions";
+human_readable_category_name(parameters) -> "runtime parameters";
+human_readable_category_name(global_parameters) -> "global runtime parameters";
+human_readable_category_name(Other) -> rabbit_data_coercion:to_list(Other).
+
 
 format(#amqp_error{name = Name, explanation = Explanation}) ->
     rabbit_data_coercion:to_binary(rabbit_misc:format("~s: ~s", [Name, Explanation]));
@@ -633,10 +656,10 @@ vhost_definition(VHost) ->
 list_users() ->
     [begin
          {ok, User} = rabbit_auth_backend_internal:lookup_user(pget(user, U)),
-         #{name              => User#internal_user.username,
-           password_hash     => base64:encode(User#internal_user.password_hash),
-           hashing_algorithm => rabbit_auth_backend_internal:hashing_module_for_user(User),
-           tags              => tags_as_binaries(User#internal_user.tags)
+         #{<<"name">>              => User#internal_user.username,
+           <<"password_hash">>     => base64:encode(User#internal_user.password_hash),
+           <<"hashing_algorithm">> => rabbit_auth_backend_internal:hashing_module_for_user(User),
+           <<"tags">>              => tags_as_binaries(User#internal_user.tags)
          }
      end || U <- rabbit_auth_backend_internal:list_users()].
 
@@ -652,10 +675,19 @@ runtime_parameter_definition(Param) ->
     }.
 
 list_global_runtime_parameters() ->
-    [global_runtime_parameter_definition(P) || P <- rabbit_runtime_parameters:list_global()].
+    [global_runtime_parameter_definition(P) || P <- rabbit_runtime_parameters:list_global(), not is_internal_parameter(P)].
 
-global_runtime_parameter_definition(Param) ->
-    maps:from_list(Param).
+global_runtime_parameter_definition(P0) ->
+    P = [{rabbit_data_coercion:to_binary(K), V} || {K, V} <- P0],
+    maps:from_list(P).
+
+-define(INTERNAL_GLOBAL_PARAM_PREFIX, "internal").
+
+is_internal_parameter(Param) ->
+    Name = rabbit_data_coercion:to_list(pget(name, Param)),
+    %% if global parameter name starts with an "internal", consider it to be internal
+    %% and exclude it from definition export
+    string:left(Name, length(?INTERNAL_GLOBAL_PARAM_PREFIX)) =:= ?INTERNAL_GLOBAL_PARAM_PREFIX.
 
 list_policies() ->
     [policy_definition(P) || P <- rabbit_policy:list()].
@@ -673,13 +705,15 @@ policy_definition(Policy) ->
 list_permissions() ->
     [permission_definition(P) || P <- rabbit_auth_backend_internal:list_permissions()].
 
-permission_definition(P) ->
+permission_definition(P0) ->
+    P = [{rabbit_data_coercion:to_binary(K), V} || {K, V} <- P0],
     maps:from_list(P).
 
 list_topic_permissions() ->
     [topic_permission_definition(P) || P <- rabbit_auth_backend_internal:list_topic_permissions()].
 
-topic_permission_definition(P) ->
+topic_permission_definition(P0) ->
+    P = [{rabbit_data_coercion:to_binary(K), V} || {K, V} <- P0],
     maps:from_list(P).
 
 tags_as_binaries(Tags) ->

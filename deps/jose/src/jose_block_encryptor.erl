@@ -1,16 +1,14 @@
 %% -*- mode: erlang; tab-width: 4; indent-tabs-mode: 1; st-rulers: [70] -*-
 %% vim: ts=4 sw=4 ft=erlang noet
 %%%-------------------------------------------------------------------
-%%% @author Andrew Bennett <andrew@pixid.com>
+%%% @author Andrew Bennett <potatosaladx@gmail.com>
 %%% @copyright 2014-2015, Andrew Bennett
 %%% @doc
 %%%
 %%% @end
-%%% Created :  10 Aug 2015 by Andrew Bennett <andrew@pixid.com>
+%%% Created :  10 Aug 2015 by Andrew Bennett <potatosaladx@gmail.com>
 %%%-------------------------------------------------------------------
 -module(jose_block_encryptor).
-
--ifdef(optional_callbacks).
 
 -callback block_decrypt(Cipher, Key, CipherText) -> PlainText | error
 	when
@@ -27,8 +25,6 @@
 
 -optional_callbacks([block_decrypt/3]).
 -optional_callbacks([block_encrypt/3]).
-
--endif.
 
 -callback block_decrypt(Cipher, Key, IV, CipherText) -> PlainText | error
 	when

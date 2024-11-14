@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Diagnostics.Commands.IsRunningCommand do
   @behaviour RabbitMQ.CLI.CommandBehaviour
@@ -26,15 +26,20 @@ defmodule RabbitMQ.CLI.Diagnostics.Commands.IsRunningCommand do
     :rabbit_misc.rpc_call(node_name, :rabbit, :is_booted, [node_name], timeout)
   end
 
-  def output(true, %{node: node_name} = _options) do
+  def output(true, %{node: node_name, formatter: "json"}) do
+    {:ok, %{"result" => true, "message" => "RabbitMQ on node #{node_name} is fully booted and running"}}
+  end
+  def output(false, %{node: node_name, formatter: "json"}) do
+    {:ok,
+     %{"result" => false, "message" => "RabbitMQ on node #{node_name} is not running or has not fully booted yet (check with is_booting)"}}
+  end
+  def output(true, %{node: node_name}) do
     {:ok, "RabbitMQ on node #{node_name} is fully booted and running"}
   end
-
-  def output(false, %{node: node_name} = _options) do
+  def output(false, %{node: node_name}) do
     {:ok,
      "RabbitMQ on node #{node_name} is not running or has not fully booted yet (check with is_booting)"}
   end
-
   use RabbitMQ.CLI.DefaultOutput
 
   def help_section(), do: :observability_and_health_checks

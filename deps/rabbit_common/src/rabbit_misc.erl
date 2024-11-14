@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_misc).
@@ -767,9 +767,13 @@ queue_fold(Fun, Init, Q) ->
         {{value, V}, Q1} -> queue_fold(Fun, Fun(V, Init), Q1)
     end.
 
-%% Sorts a list of AMQP table fields as per the AMQP spec
+%% Sorts a list of AMQP 0-9-1 table fields as per the AMQP 0-9-1 spec
 sort_field_table([]) ->
     [];
+sort_field_table(M) when is_map(M) andalso map_size(M) =:= 0 ->
+    [];
+sort_field_table(Arguments) when is_map(Arguments) ->
+    sort_field_table(maps:to_list(Arguments));
 sort_field_table(Arguments) ->
     lists:keysort(1, Arguments).
 
@@ -1103,11 +1107,16 @@ format_message_queue_entry(V) when is_tuple(V) ->
 format_message_queue_entry(_V) ->
     '_'.
 
+%% Same as rpc:multicall/4 but concatenates all results.
+%% M, F, A is expected to return a list. If it does not,
+%% its return value will be wrapped in a list.
 append_rpc_all_nodes(Nodes, M, F, A) ->
     {ResL, _} = rpc:multicall(Nodes, M, F, A),
     lists:append([case Res of
-                      {badrpc, _} -> [];
-                      _           -> Res
+                      {badrpc, _}         -> [];
+                      Xs when is_list(Xs) -> Xs;
+                      %% wrap it in a list
+                      Other               -> [Other]
                   end || Res <- ResL]).
 
 os_cmd(Command) ->

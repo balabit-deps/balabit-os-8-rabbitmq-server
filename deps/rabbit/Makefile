@@ -56,6 +56,7 @@ define PROJECT_ENV
 	    {reverse_dns_lookups, false},
 	    {cluster_partition_handling, ignore},
 	    {cluster_keepalive_interval, 10000},
+	    {autoheal_state_transition_timeout, 60000},
 	    {tcp_listen_options, [{backlog,       128},
 	                          {nodelay,       true},
 	                          {linger,        {true, 0}},
@@ -129,7 +130,9 @@ define PROJECT_ENV
 		%% interval at which the channel can perform periodic actions
 	    {channel_tick_interval, 60000},
 	    %% Default max message size is 128 MB
-	    {max_message_size, 134217728}
+	    {max_message_size, 134217728},
+	    %% Socket writer will run GC every 1 GB of outgoing data
+	    {writer_gc_threshold, 1000000000}
 	  ]
 endef
 
@@ -183,29 +186,43 @@ bats: $(BATS)
 tests:: bats
 
 SLOW_CT_SUITES := backing_queue \
+		  channel_interceptor \
+		  cluster \
 		  cluster_rename \
 		  clustering_management \
 		  config_schema \
+		  confirms_rejects \
+		  consumer_timeout \
+		  crashing_queues \
 		  dynamic_ha \
+		  dynamic_qq \
 		  eager_sync \
 		  feature_flags \
 		  health_check \
 		  lazy_queue \
+		  many_node_ha \
 		  metrics \
 		  msg_store \
 		  partitions \
 		  per_user_connection_tracking \
 		  per_vhost_connection_limit \
+		  per_vhost_connection_limit_partitions \
 		  per_vhost_msg_store \
 		  per_vhost_queue_limit \
 		  policy \
 		  priority_queue \
+		  priority_queue_recovery \
+		  publisher_confirms_parallel \
 		  queue_master_location \
+		  queue_parallel \
 		  quorum_queue \
 		  rabbit_core_metrics_gc \
 		  rabbit_fifo_prop \
+		  rabbitmq_queues_cli_integration \
+		  rabbitmqctl_integration \
 		  simple_ha \
 		  sync_detection \
+		  unit_inbroker_non_parallel \
 		  unit_inbroker_parallel \
 		  vhost
 FAST_CT_SUITES := $(filter-out $(sort $(SLOW_CT_SUITES)),$(CT_SUITES))

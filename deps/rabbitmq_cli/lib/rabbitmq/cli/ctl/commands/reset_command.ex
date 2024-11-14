@@ -11,7 +11,7 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Ctl.Commands.ResetCommand do
   alias RabbitMQ.CLI.Core.DocGuide
@@ -43,7 +43,7 @@ defmodule RabbitMQ.CLI.Ctl.Commands.ResetCommand do
 
   def help_section(), do: :node_management
 
-  def description(), do: "Instructs a RabbitMQ node to leave the cluster and eturn to its virgin state"
+  def description(), do: "Instructs a RabbitMQ node to leave the cluster and return to its virgin state"
 
   def banner(_, %{node: node_name}), do: "Resetting node #{node_name} ..."
 end

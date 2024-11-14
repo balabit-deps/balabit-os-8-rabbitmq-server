@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_exchange).
@@ -20,7 +20,7 @@
 
 -export([recover/1, policy_changed/2, callback/4, declare/7,
          assert_equivalence/6, assert_args_equivalence/2, check_type/1,
-         lookup/1, lookup_or_die/1, list/0, list/1, lookup_scratch/2,
+         lookup/1, lookup_many/1, lookup_or_die/1, list/0, list/1, lookup_scratch/2,
          update_scratch/3, update_decorators/1, immutable/1,
          info_keys/0, info/1, info/2, info_all/1, info_all/2, info_all/4,
          route/2, delete/3, validate_binding/2, count/0]).
@@ -223,6 +223,17 @@ assert_args_equivalence(#exchange{ name = Name, arguments = Args },
 
 lookup(Name) ->
     rabbit_misc:dirty_read({rabbit_exchange, Name}).
+
+
+-spec lookup_many([name()]) -> [rabbit_types:exchange()].
+
+lookup_many([])     -> [];
+lookup_many([Name]) -> ets:lookup(rabbit_exchange, Name);
+lookup_many(Names) when is_list(Names) ->
+    %% Normally we'd call mnesia:dirty_read/1 here, but that is quite
+    %% expensive for reasons explained in rabbit_misc:dirty_read/1.
+    lists:append([ets:lookup(rabbit_exchange, Name) || Name <- Names]).
+
 
 -spec lookup_or_die
         (name()) -> rabbit_types:exchange() |

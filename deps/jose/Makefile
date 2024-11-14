@@ -7,10 +7,9 @@ ERLANG_ARCH = 64
 export ERLANG_ARCH
 ERLC_OPTS = +debug_info
 export ERLC_OPTS
-ERLC_OPTS += -Doptional_callbacks=1
 
 DEPS += base64url
-dep_base64url = git git://github.com/dvv/base64url.git master
+dep_base64url = hex 0.0.1 undefined
 
 
 rebar_dep: preprocess pre-deps deps pre-app app

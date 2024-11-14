@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -define(CLIENT_ID_MAXLEN, 23).
@@ -54,7 +54,8 @@
                       send_fun,
                       peer_addr,
                       mqtt2amqp_fun,
-                      amqp2mqtt_fun }).
+                      amqp2mqtt_fun,
+                      register_state }).
 
 -record(auth_state, {username,
                      user,

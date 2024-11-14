@@ -11,13 +11,13 @@
 ## The Original Code is RabbitMQ.
 ##
 ## The Initial Developer of the Original Code is GoPivotal, Inc.
-## Copyright (c) 2007-2019 Pivotal Software, Inc.  All rights reserved.
+## Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 
 defmodule RabbitMQ.CLI.Queues.Commands.QuorumStatusCommand do
   alias RabbitMQ.CLI.Core.DocGuide
 
   @behaviour RabbitMQ.CLI.CommandBehaviour
-  def scopes(), do: [:ctl, :diagnostics, :queues]
+  def scopes(), do: [:diagnostics, :queues]
 
   def merge_defaults(args, opts), do: {args, Map.merge(%{vhost: "/"}, opts)}
 
@@ -54,7 +54,7 @@ defmodule RabbitMQ.CLI.Queues.Commands.QuorumStatusCommand do
     ]
   end
 
-  def help_section(), do: :queues
+  def help_section(), do: :observability_and_health_checks
 
   def description(), do: "Displays quorum status of a quorum queue"
 

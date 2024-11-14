@@ -36,21 +36,24 @@ because of [distribution traffic fragmentation](http://blog.erlang.org/OTP-22-Hi
 ## Quick start
 
 ```erlang
+%% First we have to start the Ra application
+ra:start(),
+
 %% All servers in a Ra cluster are named processes.
 %% Create some Server Ids to pass to the configuration
-ErlangNodes = [ra@node1, ra@node2, ra@node3]
-ServerIds = [{quick_start, N} || N <- ErlangNodes]
+ErlangNodes = [ra@node1, ra@node2, ra@node3],
+ServerIds = [{quick_start, N} || N <- ErlangNodes],
 
 %% start a simple distributed addition state machine with an initial state of 0
-{ok, ServersStarted, ServersNotStarted} = ra:start_cluster(quick_start, {simple, fun erlang:'+'/2, 0}, ServerIds),
+ClusterName = quick_start,
+{ok, ServersStarted, ServersNotStarted} = ra:start_cluster(ClusterName, {simple, fun erlang:'+'/2, 0}, ServerIds),
 
 %% Add a number to the state machine
 %% Simple state machines always return the full state after each operation
 {ok, StateMachineResult, LeaderId} = ra:process_command(hd(ServersStarted), 5),
 
 %% use the leader id from the last command result for the next
-{ok, 12, LeaderId1} = ra:process_command(LeaderId, 7),
-
+{ok, 12, LeaderId1} = ra:process_command(LeaderId, 7).
 ```
 
 "Simple" state machines like the above can only take you so far. See [Ra state machine tutorial](docs/internals/STATE_MACHINE_TUTORIAL.md)
@@ -88,9 +91,14 @@ A number of examples can be found in a [separate repository](https://github.com/
 
 A directory name where `ra` will store it's data.
 
+* `wal_data_dir`:
+
+A directory name where `ra` will store it's WAL (Write Ahead Log) data. If
+unspecified, `data_dir` is used.
+
 * `wal_max_size_bytes`:
 
-The maximum size of the WAL (Write Ahead Log) in bytes. Default: 512Mb.
+The maximum size of the WAL in bytes. Default: 512Mb.
 
 * `wal_compute_checksums`:
 
@@ -115,7 +123,9 @@ Indicate whether the wal should compute and validate checksums. Default: true
 
     The default. Uses the fdatasync system call after each batch. This avoids flushing
     file meta-data after each write batch and thus may be slightly faster than
-    `sync` on some system. NB: not all systems support fdatasync. Please consult system
+    `sync` on some system. When datasync is configured the wal will try to
+    pre allocate the entire WAL file.
+    NB: not all systems support fdatasync. Please consult system
     documentation and configure it to use sync instead if it is not supported.
 
     - `sync`:
@@ -126,7 +136,6 @@ Indicate whether the wal should compute and validate checksums. Default: true
 
 Controls the internal max batch size that the WAL will accept. Higher numbers may
 result in higher memory use. Default: 32768.
-
 
 * `logger_module`:
 
@@ -155,7 +164,7 @@ of low priority commands that are added to the log each flush cycle. Default: 25
 
 ## Copyright and License
 
-(c) 2017-2019, Pivotal Software Inc.
+(c) 2017-2020, Pivotal Software Inc.
 
 Double licensed under the ASL2 and MPL1.1.
 See [LICENSE](./LICENSE) for details.

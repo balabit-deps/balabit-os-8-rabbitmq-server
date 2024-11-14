@@ -19,16 +19,16 @@ ARG PGP_KEYSERVER=ha.pool.sks-keyservers.net
 # For context, see https://github.com/docker-library/official-images/issues/4252
 
 # Using the latest OpenSSL LTS release, with support until September 2023 - https://www.openssl.org/source/
-ENV OPENSSL_VERSION 1.1.1c
-ENV OPENSSL_SOURCE_SHA256="f6fb3079ad15076154eda9413fed42877d668e7069d9b87396d0804fdb3f4c90"
+ENV OPENSSL_VERSION 1.1.1d
+ENV OPENSSL_SOURCE_SHA256="1e3a91bc1f9dfce01af26026f856e064eab4c8ee0a8f457b5ae30b40b8b711f2"
 # https://www.openssl.org/community/omc.html
 ENV OPENSSL_PGP_KEY_IDS="0x8657ABB260F056B1E5190839D9C4D26D0E604491 0x5B2545DAB21995F4088CEFAA36CEE4DEB00CFE33 0xED230BEC4D4F2518B9D7DF41F0DB4D21C1D35231 0xC1F33DD8CE1D4CC613AF14DA9195C48241FBF7DD 0x7953AC1FBC3DC8B3B292393ED5E9E43F7DF9EE8C 0xE5E52560DD91C556DDBDA5D02064C53641C25E5D"
 
-# Use the latest stable Erlang/OTP release - gmake find-latest-otp - https://github.com/erlang/otp/tags
-ENV OTP_VERSION 22.1.5
-# TODO add PGP checking when the feature will be added to Erlang/OTP's build system
-# http://erlang.org/pipermail/erlang-questions/2019-January/097067.html
-ENV OTP_SOURCE_SHA256="b00622ef0ac433bae912cf11cbf06467a057ea710fbda6317ba5d0b10cc2e4b1"
+# Use the latest stable Erlang/OTP release - make find-latest-otp - https://github.com/erlang/otp/tags
+ARG OTP_VERSION
+ENV OTP_VERSION ${OTP_VERSION}
+ARG OTP_SHA256
+ENV OTP_SOURCE_SHA256=${OTP_SHA256}
 
 # Install dependencies required to build Erlang/OTP from source
 # http://erlang.org/doc/installation_guide/INSTALL.html
@@ -61,7 +61,7 @@ RUN set -eux; \
 	wget --progress dot:giga --output-document "$OPENSSL_PATH.tar.gz" "$OPENSSL_SOURCE_URL"; \
 	export GNUPGHOME="$(mktemp -d)"; \
 	for key in $OPENSSL_PGP_KEY_IDS; do \
-		gpg --batch --keyserver "$PGP_KEYSERVER" --recv-keys "$key"; \
+		gpg --batch --keyserver "$PGP_KEYSERVER" --recv-keys "$key" || true; \
 	done; \
 	gpg --batch --verify "$OPENSSL_PATH.tar.gz.asc" "$OPENSSL_PATH.tar.gz"; \
 	gpgconf --kill all; \
@@ -190,6 +190,8 @@ RUN set -eux; \
 # Use the latest alpha RabbitMQ 3.8 release - https://dl.bintray.com/rabbitmq/all-dev/rabbitmq-server/
 ARG RABBITMQ_VERSION
 ENV RABBITMQ_VERSION=${RABBITMQ_VERSION}
+ARG RABBITMQ_BUILD_NUMBER
+ENV RABBITMQ_BUILD_NUMBER=${RABBITMQ_BUILD_NUMBER}
 # https://www.rabbitmq.com/signatures.html#importing-gpg
 ENV RABBITMQ_PGP_KEY_ID="0x0A9AF2115F4687BD29803A206B73A36E6026DFCA"
 ENV RABBITMQ_HOME=/opt/rabbitmq
@@ -211,11 +213,12 @@ RUN set -eux; \
 	; \
 	rm -rf /var/lib/apt/lists/*; \
 	\
-        RABBITMQ_SOURCE_URL="https://dl.bintray.com/rabbitmq/all-dev/rabbitmq-server/$RABBITMQ_VERSION/rabbitmq-server-generic-unix-latest-toolchain-${RABBITMQ_VERSION}.tar.xz"; \
+        RABBITMQ_SOURCE_URL="https://s3-eu-west-1.amazonaws.com/server-release-pipeline/v3.8.x/unverified-packages/rabbitmq-server-${RABBITMQ_VERSION}-build-${RABBITMQ_BUILD_NUMBER}-generic-unix-latest-toolchain.tar"; \
 	RABBITMQ_PATH="/usr/local/src/rabbitmq-$RABBITMQ_VERSION"; \
 	\
 	# wget --progress dot:giga --output-document "$RABBITMQ_PATH.tar.xz.asc" "$RABBITMQ_SOURCE_URL.asc"; \
-	wget --progress dot:giga --output-document "$RABBITMQ_PATH.tar.xz" "$RABBITMQ_SOURCE_URL"; \
+	wget --progress dot:giga --output-document "$RABBITMQ_PATH.tar" "$RABBITMQ_SOURCE_URL"; \
+        tar --extract --file "$RABBITMQ_PATH.tar"; \
 	\
 	# export GNUPGHOME="$(mktemp -d)"; \
 	# gpg --batch --keyserver "$PGP_KEYSERVER" --recv-keys "$RABBITMQ_PGP_KEY_ID"; \
@@ -224,8 +227,8 @@ RUN set -eux; \
 	# rm -rf "$GNUPGHOME"; \
 	\
 	mkdir -p "$RABBITMQ_HOME"; \
-	tar --extract --file "$RABBITMQ_PATH.tar.xz" --directory "$RABBITMQ_HOME" --strip-components 1; \
-	rm -rf "$RABBITMQ_PATH"*; \
+	tar --extract --file "rabbitmq-server-generic-unix-latest-toolchain-${RABBITMQ_VERSION}.tar.xz" --directory "$RABBITMQ_HOME" --strip-components 1; \
+	rm -rf "$RABBITMQ_PATH"* rabbitmq-server-generic-unix*; \
 # Do not default SYS_PREFIX to RABBITMQ_HOME, leave it empty
 	grep -qE '^SYS_PREFIX=\$\{RABBITMQ_HOME\}$' "$RABBITMQ_HOME/sbin/rabbitmq-defaults"; \
 	sed -i 's/^SYS_PREFIX=.*$/SYS_PREFIX=/' "$RABBITMQ_HOME/sbin/rabbitmq-defaults"; \

@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_web_dispatch_registry).
@@ -100,7 +100,7 @@ handle_call({remove, Name}, _From,
             undefined) ->
     case listener_by_name(Name) of
         {error, not_found} ->
-            rabbit_log:warning("RabbitMQ HTTP listener registry could not find context ~p",
+            rabbit_log:warning("HTTP listener registry could not find context ~p",
                                [Name]),
             {reply, ok, undefined};
         {ok, Listener} ->

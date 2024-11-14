@@ -2,6 +2,8 @@
 
 -behaviour(gen_server).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% API functions
 -export([start_link/0,
          get_failure_probabilities/0,
@@ -52,16 +54,23 @@ handle_call(get_failure_probabilities, From, State) ->
     % reply in a different process as we don't want calculation times
     % to affect the sample time of any incoming heartbeats
     _ = spawn(fun () ->
-                      Probs = get_probabilities(Data),
-                      gen_server:reply(From, Probs)
+                      try
+                          Probs = get_probabilities(Data),
+                          gen_server:reply(From, Probs)
+                      catch ErrType:Error ->
+                          ?LOG_ERROR("get_probabilities error: ~p:~P", [ErrType, Error, 10])
+                      end
               end),
     {noreply, State}.
 
 handle_cast({hb, Node}, #state{data = Data0, monitors = Monitors0} = State) ->
     Monitors = maybe_monitor_node(Node, Monitors0),
-    Data = maps:update_with(Node,
-                            fun (S) -> aten_detect:sample_now(S) end,
-                            aten_detect:init(), Data0),
+    Data = case Data0 of
+               #{Node := S} ->
+                   Data0#{Node => aten_detect:sample_now(S)};
+               _ ->
+                   Data0#{Node => aten_detect:init()}
+           end,
     {noreply, State#state{data = Data, monitors = Monitors}}.
 
 handle_info({nodedown, Node}, #state{data = Data0, monitors = Monitors0} = State) ->

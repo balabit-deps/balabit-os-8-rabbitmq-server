@@ -1,17 +1,20 @@
 # RabbitMQ Server
 
+[![Build Status](https://travis-ci.org/rabbitmq/rabbitmq-server.svg?branch=v3.8.x)](https://travis-ci.org/rabbitmq/rabbitmq-server)
+
 [RabbitMQ](https://rabbitmq.com) is a [feature rich](https://rabbitmq.com/documentation.html), multi-protocol messaging broker. It supports:
 
  * AMQP 0-9-1
  * AMQP 1.0
- * STOMP 1.0 through 1.2
  * MQTT 3.1.1
+ * STOMP 1.0 through 1.2
 
 
 ## Installation
 
  * [Installation guides](https://rabbitmq.com/download.html) for various platforms
-
+ * [Supported and unsupported series](https://www.rabbitmq.com/versions.html)
+ * [Supported Erlang versions](https://www.rabbitmq.com/which-erlang.html)
 
 ## Tutorials & Documentation
 
@@ -52,4 +55,4 @@ RabbitMQ server is [licensed under the MPL 1.1](LICENSE-MPL-RabbitMQ).
 
 ## Copyright
 
-(c) Pivotal Software Inc., 2007-2019.
+(c) Pivotal Software Inc., 2007-2020.

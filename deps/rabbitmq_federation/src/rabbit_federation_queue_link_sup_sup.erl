@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ Federation.
 %%
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
-%% Copyright (c) 2007-2017 Pivotal Software, Inc.  All rights reserved.
+%% Copyright (c) 2007-2020 Pivotal Software, Inc.  All rights reserved.
 %%
 
 -module(rabbit_federation_queue_link_sup_sup).
@@ -51,6 +51,12 @@ start_child(Q) ->
         {error, {shutdown, _}} -> ok
     end.
 
+
+adjust({clear_upstream, VHost, UpstreamName}) ->
+    [rabbit_federation_link_sup:adjust(Pid, Q, {clear_upstream, UpstreamName}) ||
+        {Q, Pid, _, _} <- supervisor2:which_children(?SUPERVISOR),
+        ?amqqueue_vhost_equals(Q, VHost)],
+    ok;
 adjust(Reason) ->
     [rabbit_federation_link_sup:adjust(Pid, Q, Reason) ||
         {Q, Pid, _, _} <- supervisor2:which_children(?SUPERVISOR)],
