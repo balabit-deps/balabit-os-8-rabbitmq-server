@@ -1,3 +1,16 @@
+rabbitmq-server (3.8.3-0ubuntu0.2) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Cross site scripting.
+    - debian/patches/CVE-2021-32718.patch: Escape html in
+      res.req_params.username in .../www/js/dispatcher.js.
+    - debian/patches/CVE-2021-32719.patch: Format
+      upstream.value['consumer-tag'] in
+      .../www/js/tmpl/federation-upstream.ejs.
+    - CVE-2021-32718
+    - CVE-2021-32719
+
+ -- Hlib Korzhynskyy <hlib.korzhynskyy@canonical.com>  Mon, 02 Dec 2024 12:30:45 -0330
+
 rabbitmq-server (3.8.3-0ubuntu0.1) focal; urgency=medium
 
   * New upstream verison 3.8.3 (LP: #2060248).

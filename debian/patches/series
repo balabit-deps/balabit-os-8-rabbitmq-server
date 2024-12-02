@@ -3,3 +3,5 @@ CVE-2021-22116.patch
 lp1999816-fix-rabbitmqctl-status-disk-free-timeout.patch
 CVE-2023-46118-1.patch
 CVE-2023-46118-2.patch
+CVE-2021-32718.patch
+CVE-2021-32719.patch
