@@ -1,3 +1,12 @@
+rabbitmq-server (3.8.3-0ubuntu0.3) focal-security; urgency=medium
+
+  * SECURITY UPDATE: XSS vulnerability
+    - debian/patches/CVE-2025-30219.patch: sanitize error message in
+      management ui.
+    - CVE-2025-30219
+
+ -- Fabian Toepfer <fabian.toepfer@canonical.com>  Thu, 27 Mar 2025 17:08:47 +0100
+
 rabbitmq-server (3.8.3-0ubuntu0.2) focal-security; urgency=medium
 
   * SECURITY UPDATE: Cross site scripting.
